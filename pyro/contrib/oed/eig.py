@@ -1,6 +1,7 @@
 import torch
 import math
 import warnings
+import logging
 
 import pyro
 from pyro import poutine
@@ -64,7 +65,7 @@ def _eig_from_ape(model, design, target_labels, ape, eig, prior_entropy_kwargs):
         if mean_field:
             try:
                 prior_entropy = mean_field_entropy(model, [design], whitelist=target_labels)
-            except NotImplemented:
+            except NotImplementedError:
                 prior_entropy = monte_carlo_entropy(model, design, target_labels, **prior_entropy_kwargs)
         else:
             prior_entropy = monte_carlo_entropy(model, design, target_labels, **prior_entropy_kwargs)
@@ -184,7 +185,7 @@ def _vi_ape(model, design, observation_labels, target_labels, vi_parameters, is_
 
 
 def nmc_eig(model, design, observation_labels, target_labels=None,
-            N=100, M=10, M_prime=None, independent_priors=False):
+            N=100, M=10, M_prime=None, independent_priors=False, **kwargs):
     """
    Nested Monte Carlo estimate of the expected information
     gain (EIG). The estimate is, when there are not any random effects,
@@ -271,7 +272,34 @@ def nmc_eig(model, design, observation_labels, target_labels=None,
     terms = conditional_lp - marginal_lp
     nonnan = (~torch.isnan(terms)).sum(0).type_as(terms)
     terms[torch.isnan(terms)] = 0.
-    return terms.sum(0)/nonnan
+    return terms.sum(0) / nonnan
+
+
+def pce_eig(model, design, observation_labels, target_labels=None, N=100, M=10, **kwargs):
+    if isinstance(observation_labels, str):  # list of strings instead of strings
+        observation_labels = [observation_labels]
+    if isinstance(target_labels, str):
+        target_labels = [target_labels]
+
+    # Take N samples of the model
+    expanded_design = lexpand(design, N)  # N copies of the model
+    trace = poutine.trace(model).get_trace(expanded_design)
+    trace.compute_log_prob()
+    conditional_lp = sum(trace.nodes[l]["log_prob"] for l in observation_labels)
+
+    y_dict = {l: lexpand(trace.nodes[l]["value"], M) for l in observation_labels}
+    # Resample M values of theta and compute conditional probabilities
+    conditional_model = pyro.condition(model, data=y_dict)
+    # Using (M, 1) instead of (M, N) - acceptable to re-use thetas between ys because
+    # theta comes before y in graphical model
+    reexpanded_design = lexpand(design, M, 1)  # sample M theta
+    retrace = poutine.trace(conditional_model).get_trace(reexpanded_design)
+    retrace.compute_log_prob()
+    marginal_log_probs = torch.cat([lexpand(conditional_lp, 1),
+                                    sum(retrace.nodes[l]["log_prob"] for l in observation_labels)])
+    marginal_lp = marginal_log_probs.logsumexp(0) - math.log(M+1)
+
+    return _safe_mean_terms(conditional_lp - marginal_lp)
 
 
 def donsker_varadhan_eig(model, design, observation_labels, target_labels,
@@ -582,6 +610,17 @@ def vnmc_eig(model, design, observation_labels, target_labels,
                             final_design, final_num_samples)
 
 
+def elbo_learn(model, design, observation_labels, target_labels,
+               num_samples, num_steps, guide, data, optim):
+
+    if isinstance(observation_labels, str):
+        observation_labels = [observation_labels]
+    if isinstance(target_labels, str):
+        target_labels = [target_labels]
+    loss = elbo(model, guide, data, observation_labels, target_labels)
+    return opt_eig_ape_loss(design, loss, num_samples, num_steps, optim)
+
+
 def opt_eig_ape_loss(design, loss_fn, num_samples, num_steps, optim, return_history=False,
                      final_design=None, final_num_samples=None):
 
@@ -592,19 +631,26 @@ def opt_eig_ape_loss(design, loss_fn, num_samples, num_steps, optim, return_hist
 
     params = None
     history = []
+    baseline = 0.
     for step in range(num_steps):
         if params is not None:
             pyro.infer.util.zero_grads(params)
         with poutine.trace(param_only=True) as param_capture:
-            agg_loss, loss = loss_fn(design, num_samples, evaluation=return_history)
+            agg_loss, loss = loss_fn(design, num_samples, evaluation=return_history, control_variate=baseline)
         params = set(site["value"].unconstrained()
                      for site in param_capture.trace.nodes.values())
+        baseline = loss.detach()
         if torch.isnan(agg_loss):
             raise ArithmeticError("Encountered NaN loss in opt_eig_ape_loss")
         agg_loss.backward(retain_graph=True)
         if return_history:
             history.append(loss)
         optim(params)
+        try:
+            optim.step()
+        except AttributeError:
+            pass
+        # print(pyro.param("xi").detach().squeeze())
 
     _, loss = loss_fn(final_design, final_num_samples, evaluation=True)
     if return_history:
@@ -794,6 +840,57 @@ def _lfire_loss(model_marginal, model_conditional, h, observation_labels, target
     return loss_fn
 
 
+def _ace_eig_loss(model, guide, M, observation_labels, target_labels):
+
+    def loss_fn(design, num_particles, evaluation=False, **kwargs):
+        N = num_particles
+        expanded_design = lexpand(design, N)
+
+        # Sample from p(y, theta | d)
+        trace = poutine.trace(model).get_trace(expanded_design)
+        y_dict_exp = {l: lexpand(trace.nodes[l]["value"], M) for l in observation_labels}
+        y_dict = {l: trace.nodes[l]["value"] for l in observation_labels}
+        theta_dict = {l: trace.nodes[l]["value"] for l in target_labels}
+
+        trace.compute_log_prob()
+        marginal_terms_cross = sum(trace.nodes[l]["log_prob"] for l in target_labels)
+        marginal_terms_cross += sum(trace.nodes[l]["log_prob"] for l in observation_labels)
+
+        reguide_trace = poutine.trace(pyro.condition(guide, data=theta_dict)).get_trace(
+            y_dict, expanded_design, observation_labels, target_labels
+        )
+        reguide_trace.compute_log_prob()
+        marginal_terms_cross -= sum(reguide_trace.nodes[l]["log_prob"] for l in target_labels)
+
+        # Sample M times from q(theta | y, d) for each y
+        reexpanded_design = lexpand(expanded_design, M)
+        guide_trace = poutine.trace(guide).get_trace(
+            y_dict, reexpanded_design, observation_labels, target_labels
+        )
+        theta_y_dict = {l: guide_trace.nodes[l]["value"] for l in target_labels}
+        theta_y_dict.update(y_dict_exp)
+        guide_trace.compute_log_prob()
+
+        # Re-run that through the model to compute the joint
+        model_trace = poutine.trace(pyro.condition(model, data=theta_y_dict)).get_trace(reexpanded_design)
+        model_trace.compute_log_prob()
+
+        marginal_terms_proposal = -sum(guide_trace.nodes[l]["log_prob"] for l in target_labels)
+        marginal_terms_proposal += sum(model_trace.nodes[l]["log_prob"] for l in target_labels)
+        marginal_terms_proposal += sum(model_trace.nodes[l]["log_prob"] for l in observation_labels)
+
+        marginal_terms = torch.cat([lexpand(marginal_terms_cross, 1), marginal_terms_proposal])
+        terms = -marginal_terms.logsumexp(0) + math.log(M + 1)
+
+        # At eval time, add p(y | theta, d) terms
+        if evaluation:
+            terms += sum(trace.nodes[l]["log_prob"] for l in observation_labels)
+
+        return _safe_mean_terms(terms)
+
+    return loss_fn
+
+
 def _vnmc_eig_loss(model, guide, observation_labels, target_labels):
     """VNMC loss: to evaluate directly use `vnmc_eig` setting `num_steps=0`."""
 
@@ -803,13 +900,14 @@ def _vnmc_eig_loss(model, guide, observation_labels, target_labels):
 
         # Sample from p(y, theta | d)
         trace = poutine.trace(model).get_trace(expanded_design)
+        y_dict_unexp = {l: trace.nodes[l]["value"] for l in observation_labels}
         y_dict = {l: lexpand(trace.nodes[l]["value"], M) for l in observation_labels}
 
         # Sample M times from q(theta | y, d) for each y
         reexpanded_design = lexpand(expanded_design, M)
-        conditional_guide = pyro.condition(guide, data=y_dict)
-        guide_trace = poutine.trace(conditional_guide).get_trace(
-            y_dict, reexpanded_design, observation_labels, target_labels)
+        # conditional_guide = pyro.condition(guide, data=y_dict)
+        guide_trace = poutine.trace(guide).get_trace(
+            y_dict_unexp, reexpanded_design, observation_labels, target_labels)
         theta_y_dict = {l: guide_trace.nodes[l]["value"] for l in target_labels}
         theta_y_dict.update(y_dict)
         guide_trace.compute_log_prob()
@@ -828,6 +926,34 @@ def _vnmc_eig_loss(model, guide, observation_labels, target_labels):
         if evaluation:
             trace.compute_log_prob()
             terms += sum(trace.nodes[l]["log_prob"] for l in observation_labels)
+
+        return _safe_mean_terms(terms)
+
+    return loss_fn
+
+
+def elbo(model, guide, data, observation_labels, target_labels):
+
+    def loss_fn(design, num_particles, **kwargs):
+
+        y_dict = {l: lexpand(y, num_particles) for l, y in data.items()}
+
+        expanded_design = lexpand(design, num_particles)
+
+        # Sample from q(theta)
+        trace = poutine.trace(guide).get_trace(expanded_design)
+        theta_y_dict = {l: trace.nodes[l]["value"] for l in target_labels}
+        theta_y_dict.update(y_dict)
+        trace.compute_log_prob()
+
+        # Run through p(theta)
+        modelp = pyro.condition(model, data=theta_y_dict)
+        model_trace = poutine.trace(modelp).get_trace(expanded_design)
+        model_trace.compute_log_prob()
+
+        terms = sum(trace.nodes[l]["log_prob"] for l in target_labels)
+        terms -= sum(model_trace.nodes[l]["log_prob"] for l in target_labels)
+        terms -= sum(model_trace.nodes[l]["log_prob"] for l in observation_labels)
 
         return _safe_mean_terms(terms)
 

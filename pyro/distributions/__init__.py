@@ -25,10 +25,14 @@ from pyro.distributions.von_mises_3d import VonMises3D
 from pyro.distributions.zero_inflated_poisson import ZeroInflatedPoisson
 from pyro.distributions.lkj import CorrLCholeskyTransform, LKJCorrCholesky, corr_cholesky_constraint
 from pyro.distributions.transforms import *  # noqa F403
+from pyro.distributions.censored_sigmoid_normal import CensoredSigmoidNormal
+from pyro.distributions.censored_sigmoid_normal_ends import CensoredSigmoidNormalEnds
 
 __all__ = [
     "AVFMultivariateNormal",
     "BetaBinomial",
+    "CensoredSigmoidNormal",
+    "CensoredSigmoidNormalEnds",
     "Delta",
     "DirichletMultinomial",
     "DiscreteHMM",

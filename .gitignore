@@ -67,6 +67,7 @@ wheels/
 # Installer logs
 pip-log.txt
 pip-delete-this-directory.txt
+Pipfile*
 
 # Unit test / coverage reports
 htmlcov/
@@ -135,3 +136,6 @@ ENV/
 *.swo
 *.swp
 *~
+
+.metadata
+RemoteSystemsTempFiles

@@ -1,3 +1,5 @@
+from __future__ import absolute_import, division, print_function
+
 import torch
 from torch.distributions import constraints
 from torch.nn import Parameter
@@ -42,17 +44,17 @@ class Isotropy(Kernel):
         """
         if Z is None:
             Z = X
-        X = self._slice_input(X)
-        Z = self._slice_input(Z)
-        if X.size(1) != Z.size(1):
+        # X = self._slice_input(X)
+        # Z = self._slice_input(Z)
+        if X.shape[-1] != Z.shape[-1]:
             raise ValueError("Inputs must have the same number of features.")
 
         scaled_X = X / self.lengthscale
         scaled_Z = Z / self.lengthscale
-        X2 = (scaled_X ** 2).sum(1, keepdim=True)
-        Z2 = (scaled_Z ** 2).sum(1, keepdim=True)
-        XZ = scaled_X.matmul(scaled_Z.t())
-        r2 = X2 - 2 * XZ + Z2.t()
+        X2 = (scaled_X ** 2).sum(-1, keepdim=True)
+        Z2 = (scaled_Z ** 2).sum(-1, keepdim=True)
+        XZ = scaled_X.matmul(scaled_Z.transpose(-1, -2))
+        r2 = X2 - 2 * XZ + Z2.transpose(-1, -2)
         return r2.clamp(min=0)
 
     def _scaled_dist(self, X, Z=None):

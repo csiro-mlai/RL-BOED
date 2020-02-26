@@ -21,6 +21,6 @@ def linear_model_ground_truth(model, design, observation_labels, target_labels, 
                            for C in target_posterior_covs])
     if eig:
         prior_entropy = mean_field_entropy(model, [design], whitelist=target_labels)
-        output = prior_entropy - output
+        output = prior_entropy - output.reshape(design.shape[:-2])
 
     return output.reshape(design.shape[:-2])

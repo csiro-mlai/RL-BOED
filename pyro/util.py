@@ -27,6 +27,10 @@ def set_rng_seed(rng_seed):
         pass
 
 
+def is_bad(a):
+    return torch_isnan(a) or torch_isinf(a)
+
+
 def torch_isnan(x):
     """
     A convenient function to check if a Tensor contains any nan; also works with numbers

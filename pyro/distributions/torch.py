@@ -1,8 +1,10 @@
 import torch
 from torch.distributions import constraints, kl_divergence, register_kl
+from torch.distributions.utils import _sum_rightmost
 
 from pyro.distributions.torch_distribution import IndependentConstraint, TorchDistributionMixin
 from pyro.distributions.util import sum_rightmost
+from pyro.distributions.score_parts import ScoreParts
 
 
 # This overloads .log_prob() and .enumerate_support() to speed up evaluating
@@ -60,6 +62,11 @@ class Independent(torch.distributions.Independent, TorchDistributionMixin):
     @_validate_args.setter
     def _validate_args(self, value):
         self.base_dist._validate_args = value
+
+    # def score_parts(self, x, *args, **kwargs):
+    #     summed = [_sum_rightmost(torch.tensor(a), self.reinterpreted_batch_ndims)
+    #               for a in self.base_dist.score_parts(x, *args, **kwargs)]
+    #     return ScoreParts(*summed)
 
 
 @register_kl(Independent, Independent)
