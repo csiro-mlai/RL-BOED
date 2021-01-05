@@ -4,7 +4,6 @@ from pyro.contrib.oed.eig import elbo_learn
 from pyro.util import is_bad
 from contextlib import ExitStack
 from pyro.contrib.util import iter_plates_to_shape, rexpand, rmv
-from pyro.infer import SVI
 
 import torch
 import pyro
@@ -40,16 +39,10 @@ class ExperimentModel(ABC):
     def entropy(self):
         raise NotImplementedError
 
-    def conditional_pdf(self, design):
-        raise NotImplementedError
-
-    def sample(self, design):
-        raise NotImplementedError
-
 
 class CESModel(ExperimentModel):
     def __init__(self, init_rho=None, init_alpha=None, init_mu=None,
-                 init_sig=None, n_parallel=10, obs_sd=0.005, obs_label="y",
+                 init_sig=None, n_parallel=1, obs_sd=0.005, obs_label="y",
                  n_elbo_samples=1, n_elbo_steps=100, elbo_lr=0.04):
         super().__init__()
         self.init_rho = init_rho if init_rho else torch.ones(n_parallel, 1, 2)
@@ -118,9 +111,9 @@ class CESModel(ExperimentModel):
                 rho = rexpand(rho, design.shape[-2])
                 slope = rexpand(slope, design.shape[-2])
                 d1, d2 = design[..., 0:3], design[..., 3:6]
-                U1rho = (rmv(d1.pow(rho.unsqueeze(-1)), alpha)).pow(1. / rho)
-                U2rho = (rmv(d2.pow(rho.unsqueeze(-1)), alpha)).pow(1. / rho)
-                mean = slope * (U1rho - U2rho)
+                u1rho = (rmv(d1.pow(rho.unsqueeze(-1)), alpha)).pow(1. / rho)
+                u2rho = (rmv(d2.pow(rho.unsqueeze(-1)), alpha)).pow(1. / rho)
+                mean = slope * (u1rho - u2rho)
                 sd = slope * self.obs_sd * (
                         1 + torch.norm(d1 - d2, dim=-1, p=2))
 
@@ -176,3 +169,17 @@ class CESModel(ExperimentModel):
         self.alpha_con = pyro.param("alpha_con").detach().clone()
         self.slope_mu = pyro.param("slope_mu").detach().clone()
         self.slope_sig = pyro.param("slope_sig").detach().clone()
+
+    def get_params(self):
+        return torch.cat([
+            torch.flatten(self.rho_con),
+            torch.flatten(self.alpha_con),
+            torch.flatten(self.slope_mu),
+            torch.flatten(self.slope_sig),
+        ])
+
+    def entropy(self):
+        rho_dist = dist.Dirchlet(self.rho_con)
+        alpha_dist = dist.Dirchlet(self.alpha_con)
+        slope_dist = dist.LogNormal(self.slope_mu, self.slope_sig)
+        return rho_dist.entropy() + alpha_dist.entropy() + slope_dist.entropy()
