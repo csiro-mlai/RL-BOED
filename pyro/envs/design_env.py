@@ -16,27 +16,26 @@ class DesignEnv(Env):
         self.observation_space = model_space
         self.model = model
         self.budget = budget
-        self.model_copy = None
         self.exp_idx = 0
         self.reset()
 
     def reset(self):
-        self.model_copy = self.model.copy()
+        self.model.reset()
         self.exp_idx = 0
         return self._get_obs
 
     def step(self, action):
         design = action
-        self.model_copy.run_experiment(design)
+        self.model.run_experiment(design)
         self.exp_idx += 1
         return self._get_obs()
 
     def _get_obs(self):
-        observation = self.model_copy.get_params()
+        observation = self.model.get_params()
         reward = 0
         done = self.terminal()
         if done:
-            reward = self.model_copy.entropy()
+            reward = self.model.entropy()
         info = {}
         return observation, reward, done, info
 
