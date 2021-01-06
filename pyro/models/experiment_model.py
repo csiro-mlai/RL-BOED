@@ -8,9 +8,11 @@ from pyro.contrib.util import iter_plates_to_shape, rexpand, rmv
 import torch
 import pyro
 import pyro.distributions as dist
+import torch.distributions as torch_dist
 import pyro.optim as optim
 
 epsilon = torch.tensor(1e-9)
+eps_constraint = torch_dist.constraints.greater_than(epsilon)
 
 
 class ExperimentModel(ABC):
@@ -76,12 +78,12 @@ class CESModel(ExperimentModel):
                 del param_store[name]
 
         pyro.param("rho_con", self.init_rho.detach().clone(),
-                   constraint=dist.constraints.positive)
+                   constraint=eps_constraint)
         pyro.param("alpha_con", self.init_alpha.detach().clone(),
-                   constraint=dist.constraints.positive)
+                   constraint=eps_constraint)
         pyro.param("slope_mu", self.init_mu.detach().clone())
         pyro.param("slope_sig", self.init_sig.detach().clone(),
-                   constraint=dist.constraints.positive)
+                   constraint=eps_constraint)
 
     def make_model(self):
         def model(design):
@@ -127,12 +129,12 @@ class CESModel(ExperimentModel):
 
     def guide(self, design):
         rho_con = pyro.param("rho_con", self.init_rho.detach().clone(),
-                             constraint=dist.constraints.positive)
+                             constraint=eps_constraint)
         alpha_con = pyro.param("alpha_con", self.init_alpha.detach().clone(),
-                               constraint=dist.constraints.positive)
+                               constraint=eps_constraint)
         slope_mu = pyro.param("slope_mu", self.init_mu.detach().clone())
         slope_sig = pyro.param("slope_sig", self.init_sig.detach().clone(),
-                               constraint=dist.constraints.positive)
+                               constraint=eps_constraint)
         batch_shape = design.shape[:-2]
         with ExitStack() as stack:
             for plate in iter_plates_to_shape(batch_shape):
@@ -179,7 +181,7 @@ class CESModel(ExperimentModel):
         ])
 
     def entropy(self):
-        rho_dist = dist.Dirchlet(self.rho_con)
-        alpha_dist = dist.Dirchlet(self.alpha_con)
-        slope_dist = dist.LogNormal(self.slope_mu, self.slope_sig)
+        rho_dist = torch_dist.Dirichlet(self.rho_con)
+        alpha_dist = torch_dist.Dirichlet(self.alpha_con)
+        slope_dist = torch_dist.LogNormal(self.slope_mu, self.slope_sig)
         return rho_dist.entropy() + alpha_dist.entropy() + slope_dist.entropy()

@@ -13,7 +13,7 @@ from matplotlib.ticker import MaxNLocator
 output_dir = "./run_outputs/ces/"
 cmap = plt.get_cmap("Paired")
 COLOURS = {'ace-grad': cmap(1),
-           'nce-grad': cmap(3),
+           'pce-grad': cmap(3),
            'posterior-grad': cmap(5),
            'marginal': cmap(7)}
 VALUE_LABELS = {"Entropy": "Posterior entropy",
@@ -26,9 +26,9 @@ VALUE_LABELS = {"Entropy": "Posterior entropy",
                 "total_rmse": 'Total RMSE',
                 "Imax": "EIG lower bound"}
 LABELS = {'marginal': 'BO + marginal (baseline)', 'rand': 'Random design (baseline)', 'nmc': 'BOED NMC (baseline)',
-          'posterior-grad': "BA gradient", 'nce-grad': "PCE gradient", "ace-grad": "ACE gradient"}
+          'posterior-grad': "BA gradient", 'pce-grad': "PCE gradient", "ace-grad": "ACE gradient"}
 MARKERS = {'ace-grad': 'x',
-           'nce-grad': '|',
+           'pce-grad': '|',
            'posterior-grad': '1',
            'marginal': '.'}
 
@@ -121,6 +121,7 @@ def main(fnames, findices, plot, percentile):
     if plot:
         for statistic in ["Entropy", "rho_rmse", "alpha_rmse", "slope_rmse", "Imax"]:
             plt.figure(figsize=(5, 5))
+            print(reformed[statistic].keys())
             for i, k in enumerate(reformed[statistic]):
                 e = reformed[statistic][k].squeeze()[1:]
                 lower, centre, upper = upper_lower(e, percentile=percentile)
