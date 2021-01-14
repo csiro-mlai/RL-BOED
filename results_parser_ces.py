@@ -14,6 +14,7 @@ output_dir = "./run_outputs/ces/"
 cmap = plt.get_cmap("Paired")
 COLOURS = {'ace-grad': cmap(1),
            'pce-grad': cmap(3),
+           'rand': cmap(4),
            'posterior-grad': cmap(5),
            'marginal': cmap(7)}
 VALUE_LABELS = {"Entropy": "Posterior entropy",
@@ -26,9 +27,10 @@ VALUE_LABELS = {"Entropy": "Posterior entropy",
                 "total_rmse": 'Total RMSE',
                 "Imax": "EIG lower bound"}
 LABELS = {'marginal': 'BO + marginal (baseline)', 'rand': 'Random design (baseline)', 'nmc': 'BOED NMC (baseline)',
-          'posterior-grad': "BA gradient", 'pce-grad': "PCE gradient", "ace-grad": "ACE gradient"}
+        'posterior-grad': "BA gradient", 'pce-grad': "PCE gradient", "rand": "Random", "ace-grad": "ACE gradient"}
 MARKERS = {'ace-grad': 'x',
            'pce-grad': '|',
+           'rand': '|',
            'posterior-grad': '1',
            'marginal': '.'}
 
@@ -102,7 +104,10 @@ def main(fnames, findices, plot, percentile):
                     try:
                         eig = -results['min loss']
                     except:
-                        eig = results['max EIG']
+                        try:
+                            eig = results['max EIG']
+                        except:
+                            eig=torch.zeros(1)
 
                     output = {"rho_rmse": rho_rmse, "alpha_rmse": alpha_rmse, "slope_rmse": slope_rmse,
                               "Entropy": entropy, "total_rmse": total_rmse, 'Imax': eig}

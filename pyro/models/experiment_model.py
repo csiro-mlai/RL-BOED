@@ -54,24 +54,25 @@ class CESModel(ExperimentModel):
         self.init_sig = init_sig if init_sig else 3. * torch.ones(n_parallel, 1)
         self.rho_con = self.init_rho.detach().clone()
         self.alpha_con = self.init_alpha.detach().clone()
-        self.slope_mu = self.init_mu.detach().clone()
-        self.slope_sig = self.init_sig.detach().clone()
+        self.u_mu = self.init_mu.detach().clone()
+        self.u_sig = self.init_sig.detach().clone()
         self.n_parallel, self.elbo_lr = n_parallel, elbo_lr
         self.n_elbo_samples, self.n_elbo_steps = n_elbo_samples, n_elbo_steps
         self.obs_sd = obs_sd
         self.obs_label = obs_label
+        self.ys = torch.tensor([])
         self.param_names = [
             "rho_con",
             "alpha_con",
-            "slope_mu",
-            "slope_sig",
+            "u_mu",
+            "u_sig",
         ]
 
     def reset(self):
         self.rho_con = self.init_rho.detach().clone()
         self.alpha_con = self.init_alpha.detach().clone()
-        self.slope_mu = self.init_mu.detach().clone()
-        self.slope_sig = self.init_sig.detach().clone()
+        self.u_mu = self.init_mu.detach().clone()
+        self.u_sig = self.init_sig.detach().clone()
         param_store = pyro.get_param_store()
         for name in self.param_names:
             if name in param_store:
@@ -81,9 +82,10 @@ class CESModel(ExperimentModel):
                    constraint=eps_constraint)
         pyro.param("alpha_con", self.init_alpha.detach().clone(),
                    constraint=eps_constraint)
-        pyro.param("slope_mu", self.init_mu.detach().clone())
-        pyro.param("slope_sig", self.init_sig.detach().clone(),
+        pyro.param("u_mu", self.init_mu.detach().clone())
+        pyro.param("u_sig", self.init_sig.detach().clone(),
                    constraint=eps_constraint)
+        self.ys = torch.tensor([])
 
     def make_model(self):
         def model(design):
@@ -103,20 +105,20 @@ class CESModel(ExperimentModel):
                     "alpha",
                     dist.Dirichlet(self.alpha_con.expand(alpha_shape))
                 )
-                slope = pyro.sample(
-                    "slope",
+                u = pyro.sample(
+                    "u",
                     dist.LogNormal(
-                        self.slope_mu.expand(batch_shape),
-                        self.slope_sig.expand(batch_shape)
+                        self.u_mu.expand(batch_shape),
+                        self.u_sig.expand(batch_shape)
                     )
                 )
                 rho = rexpand(rho, design.shape[-2])
-                slope = rexpand(slope, design.shape[-2])
+                u = rexpand(u, design.shape[-2])
                 d1, d2 = design[..., 0:3], design[..., 3:6]
                 u1rho = (rmv(d1.pow(rho.unsqueeze(-1)), alpha)).pow(1. / rho)
                 u2rho = (rmv(d2.pow(rho.unsqueeze(-1)), alpha)).pow(1. / rho)
-                mean = slope * (u1rho - u2rho)
-                sd = slope * self.obs_sd * (
+                mean = u * (u1rho - u2rho)
+                sd = u * self.obs_sd * (
                         1 + torch.norm(d1 - d2, dim=-1, p=2))
 
                 emission_dist = dist.CensoredSigmoidNormal(
@@ -132,8 +134,8 @@ class CESModel(ExperimentModel):
                              constraint=eps_constraint)
         alpha_con = pyro.param("alpha_con", self.init_alpha.detach().clone(),
                                constraint=eps_constraint)
-        slope_mu = pyro.param("slope_mu", self.init_mu.detach().clone())
-        slope_sig = pyro.param("slope_sig", self.init_sig.detach().clone(),
+        u_mu = pyro.param("u_mu", self.init_mu.detach().clone())
+        u_sig = pyro.param("u_sig", self.init_sig.detach().clone(),
                                constraint=eps_constraint)
         batch_shape = design.shape[:-2]
         with ExitStack() as stack:
@@ -143,8 +145,8 @@ class CESModel(ExperimentModel):
             pyro.sample("rho", dist.Dirichlet(rho_con.expand(rho_shape)))
             alpha_shape = batch_shape + (alpha_con.shape[-1],)
             pyro.sample("alpha", dist.Dirichlet(alpha_con.expand(alpha_shape)))
-            pyro.sample("slope", dist.LogNormal(slope_mu.expand(batch_shape),
-                                                slope_sig.expand(batch_shape)))
+            pyro.sample("u", dist.LogNormal(u_mu.expand(batch_shape),
+                                                u_sig.expand(batch_shape)))
 
     def run_experiment(self, design, y=None):
         """
@@ -158,10 +160,11 @@ class CESModel(ExperimentModel):
         if y is None:
             y = cur_model(design)
         y = y.detach().clone()
+        self.ys = torch.cat([self.ys, y], dim=-1)
 
         # learn the posterior given design and outcome
         elbo_learn(
-            cur_model, design, [self.obs_label], ["rho", "alpha", "slope"],
+            cur_model, design, [self.obs_label], ["rho", "alpha", "u"],
             self.n_elbo_samples, self.n_elbo_steps, self.guide,
             {self.obs_label: y}, optim.Adam({"lr": self.elbo_lr})
         )
@@ -169,19 +172,19 @@ class CESModel(ExperimentModel):
         # update parameters
         self.rho_con = pyro.param("rho_con").detach().clone()
         self.alpha_con = pyro.param("alpha_con").detach().clone()
-        self.slope_mu = pyro.param("slope_mu").detach().clone()
-        self.slope_sig = pyro.param("slope_sig").detach().clone()
+        self.u_mu = pyro.param("u_mu").detach().clone()
+        self.u_sig = pyro.param("u_sig").detach().clone()
 
     def get_params(self):
         return torch.cat([
             torch.flatten(self.rho_con),
             torch.flatten(self.alpha_con),
-            torch.flatten(self.slope_mu),
-            torch.flatten(self.slope_sig),
+            torch.flatten(self.u_mu),
+            torch.flatten(self.u_sig),
         ])
 
     def entropy(self):
         rho_dist = torch_dist.Dirichlet(self.rho_con)
         alpha_dist = torch_dist.Dirichlet(self.alpha_con)
-        slope_dist = torch_dist.LogNormal(self.slope_mu, self.slope_sig)
-        return rho_dist.entropy() + alpha_dist.entropy() + slope_dist.entropy()
+        u_dist = torch_dist.LogNormal(self.u_mu, self.u_sig)
+        return rho_dist.entropy() + alpha_dist.entropy() + u_dist.entropy()
