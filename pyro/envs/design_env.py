@@ -1,3 +1,6 @@
+import torch
+import numpy as np
+
 from gym import Env
 
 
@@ -22,22 +25,23 @@ class DesignEnv(Env):
     def reset(self):
         self.model.reset()
         self.exp_idx = 0
-        return self._get_obs
-
-    def step(self, action):
-        design = action
-        self.model.run_experiment(design)
-        self.exp_idx += 1
         return self._get_obs()
 
-    def _get_obs(self):
-        observation = self.model.get_params()
+    def step(self, action):
+        design = torch.tensor(action)
+        self.model.run_experiment(design)
+        self.exp_idx += 1
+        obs = self._get_obs()
         reward = 0
         done = self.terminal()
         if done:
-            reward = self.model.entropy()
+            reward = -self.model.entropy()
         info = {}
-        return observation, reward, done, info
+        return obs, reward, done, info
+
+    def _get_obs(self):
+        return np.asarray(self.model.get_params())
+
 
     def terminal(self):
         return self.exp_idx >= self.budget

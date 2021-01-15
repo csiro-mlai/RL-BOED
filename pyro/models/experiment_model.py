@@ -45,7 +45,7 @@ class ExperimentModel(ABC):
 class CESModel(ExperimentModel):
     def __init__(self, init_rho=None, init_alpha=None, init_mu=None,
                  init_sig=None, n_parallel=1, obs_sd=0.005, obs_label="y",
-                 n_elbo_samples=1, n_elbo_steps=100, elbo_lr=0.04):
+                 n_elbo_samples=100, n_elbo_steps=100, elbo_lr=0.04):
         super().__init__()
         self.init_rho = init_rho if init_rho else torch.ones(n_parallel, 1, 2)
         self.init_alpha = \
