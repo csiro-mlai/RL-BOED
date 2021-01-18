@@ -42,7 +42,6 @@ class DesignEnv(Env):
     def _get_obs(self):
         return np.asarray(self.model.get_params())
 
-
     def terminal(self):
         return self.exp_idx >= self.budget
 

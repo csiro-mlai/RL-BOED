@@ -17,6 +17,7 @@ pyro/_version.py
 processed
 raw
 *.pkl
+*.npz
 
 # Logs
 logs
