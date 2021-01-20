@@ -18,12 +18,13 @@ class DesignEnv(Env):
         self.action_space = design_space
         self.observation_space = model_space
         self.model = model
+        self.n_parallel = model.n_parallel
         self.budget = budget
         self.exp_idx = 0
-        self.reset()
 
-    def reset(self):
-        self.model.reset()
+    def reset(self, n_parallel=1):
+        self.n_parallel = n_parallel
+        self.model.reset(n_parallel)
         self.exp_idx = 0
         return self._get_obs()
 
@@ -32,15 +33,16 @@ class DesignEnv(Env):
         self.model.run_experiment(design)
         self.exp_idx += 1
         obs = self._get_obs()
-        reward = 0
+        reward = torch.zeros((self.n_parallel,))
         done = self.terminal()
         if done:
-            reward = -self.model.entropy()
+            reward = -self.model.entropy().reshape((self.n_parallel,))
+        done = done * torch.ones_like(reward, dtype=torch.bool)
         info = {}
         return obs, reward, done, info
 
     def _get_obs(self):
-        return np.asarray(self.model.get_params())
+        return np.array(self.model.get_params())
 
     def terminal(self):
         return self.exp_idx >= self.budget

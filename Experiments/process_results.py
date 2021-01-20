@@ -11,6 +11,7 @@ def main(fpaths, dest):
 	rlqs = []
 	ruqs = []
 	rmeans = []
+	pstds = []
 
 	for fpath in fpaths:
 		with open(fpath, newline='') as csvfile:
@@ -21,13 +22,15 @@ def main(fpaths, dest):
 			rlq = []
 			ruq = []
 			rmean = []
+			pstd = []
 			for row in reader:
-				amean.append(row["Action/MeanAction"])
-				astd.append(row["Action/StdAction"])
-				rmedian.append(row["Return/MedianReturn"])
-				rlq.append(row["Return/LowerQuartileReturn"])
-				ruq.append(row["Return/UpperQuartileReturn"])
-				rmean.append(row["Evaluation/AverageReturn"])
+				if "Action/MeanAction" in row: amean.append(row["Action/MeanAction"])
+				if "Action/StdAction" in row: astd.append(row["Action/StdAction"])
+				if "Return/MedianReturn" in row: rmedian.append(row["Return/MedianReturn"])
+				if "Return/LowerQuartileReturn" in row: rlq.append(row["Return/LowerQuartileReturn"])
+				if "Return/UpperQuartileReturn" in row: ruq.append(row["Return/UpperQuartileReturn"])
+				if "Evaluation/AverageReturn" in row: rmean.append(row["Evaluation/AverageReturn"])
+				if "Policy/MeanStd" in row: pstd.append(row["Policy/MeanStd"])
 
 			ameans.append(amean)
 			astds.append(astd)
@@ -35,10 +38,11 @@ def main(fpaths, dest):
 			rlqs.append(rlq)
 			ruqs.append(ruq)
 			rmeans.append(rmean)
+			pstds.append(pstd)
 	
 	np.savez_compressed(
 		dest, ameans=ameans, astds=astds, rmedians=rmedians, rlqs=rlqs,
-		ruqs=ruqs, rmeans=rmeans
+		ruqs=ruqs, rmeans=rmeans, pstds=pstd
 	)
 
 if __name__ == "__main__":

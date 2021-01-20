@@ -15,6 +15,7 @@ from garage.sampler import LocalSampler
 from gym import spaces
 from pyro.models.experiment_model import CESModel
 from pyro.envs.design_env import DesignEnv
+from pyro.sampler.vector_worker import VectorWorker
 from torch import nn
 from torch.nn import functional as F
 
@@ -28,30 +29,35 @@ def sac_ces(ctxt=None, seed=1):
     deterministic.set_seed(seed)
     pyro.set_rng_seed(seed)
     runner = LocalRunner(snapshot_config=ctxt)
-    n_parallel = 1
-    design_space = spaces.Box(low=0.01, high=100, shape=(n_parallel, 1, 1, 6))
-    model_space = spaces.Box(low=-np.inf, high=np.inf, shape=(n_parallel, 7))
-    model = CESModel(n_parallel=n_parallel)
+    n_parallel = 100
     budget = 1
+    layer_size = 128
+    design_space = spaces.Box(low=0.01, high=100, shape=(1, 1, 1, 6))
+    model_space = spaces.Box(low=-np.inf, high=np.inf, shape=(1, 7))
+    model = CESModel(n_parallel=n_parallel)
     env = GarageEnv(
-        normalize(DesignEnv(design_space, model_space, model, budget))
+        normalize(
+            DesignEnv(design_space, model_space, model, budget),
+            normalize_obs=False
+        )
     )
 
     policy = TanhGaussianMLPPolicy(
         env_spec=env.spec,
-        hidden_sizes=[256, 256],
+        hidden_sizes=[layer_size, layer_size],
         hidden_nonlinearity=nn.ReLU,
-        output_nonlinearity=nn.Tanh,
+        output_nonlinearity=None,
+        init_std=np.sqrt(1/3),
         min_std=np.exp(-20.),
-        max_std=np.exp(2.),
+        max_std=np.exp(0.),
     )
 
     qf1 = ContinuousMLPQFunction(env_spec=env.spec,
-                                 hidden_sizes=[256, 256],
+                                 hidden_sizes=[layer_size, layer_size],
                                  hidden_nonlinearity=F.relu)
 
     qf2 = ContinuousMLPQFunction(env_spec=env.spec,
-                                 hidden_sizes=[256, 256],
+                                 hidden_sizes=[layer_size, layer_size],
                                  hidden_nonlinearity=F.relu)
 
     replay_buffer = PathBuffer(capacity_in_transitions=int(1e6))
@@ -63,20 +69,22 @@ def sac_ces(ctxt=None, seed=1):
               gradient_steps_per_itr=1000,
               max_path_length=budget,
               replay_buffer=replay_buffer,
-              min_buffer_size=1e2,
+              min_buffer_size=int(1e4),
               target_update_tau=5e-3,
               discount=0.99,
               buffer_batch_size=256,
               reward_scale=1.,
-              steps_per_epoch=1)
+              steps_per_epoch=1,
+              num_evaluation_trajectories=1)
 
     if torch.cuda.is_available():
         set_gpu_mode(True)
     else:
         set_gpu_mode(False)
     sac.to()
-    runner.setup(algo=sac, env=env, sampler_cls=LocalSampler)
-    runner.train(n_epochs=100, batch_size=100)
+    runner.setup(algo=sac, env=env, sampler_cls=LocalSampler,
+                 worker_class=VectorWorker)
+    runner.train(n_epochs=100, batch_size=budget)
 
 
 if __name__ == "__main__":

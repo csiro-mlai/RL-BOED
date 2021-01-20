@@ -3,7 +3,7 @@ from abc import ABC
 from pyro.contrib.oed.eig import elbo_learn
 from pyro.util import is_bad
 from contextlib import ExitStack
-from pyro.contrib.util import iter_plates_to_shape, rexpand, rmv
+from pyro.contrib.util import iter_plates_to_shape, lexpand, rexpand, rmv
 
 import torch
 import pyro
@@ -68,7 +68,13 @@ class CESModel(ExperimentModel):
             "u_sig",
         ]
 
-    def reset(self):
+    def reset(self, n_parallel=None):
+        if n_parallel is not None:
+            self.n_parallel = n_parallel
+        self.init_rho = lexpand(self.init_rho[0], self.n_parallel)
+        self.init_alpha = lexpand(self.init_alpha[0], self.n_parallel)
+        self.init_mu = lexpand(self.init_mu[0], self.n_parallel)
+        self.init_sig = lexpand(self.init_sig[0], self.n_parallel)
         self.rho_con = self.init_rho.detach().clone()
         self.alpha_con = self.init_alpha.detach().clone()
         self.u_mu = self.init_mu.detach().clone()
@@ -78,12 +84,12 @@ class CESModel(ExperimentModel):
             if name in param_store:
                 del param_store[name]
 
-        pyro.param("rho_con", self.init_rho.detach().clone(),
+        pyro.param("rho_con", self.rho_con.detach().clone(),
                    constraint=eps_constraint)
-        pyro.param("alpha_con", self.init_alpha.detach().clone(),
+        pyro.param("alpha_con", self.alpha_con.detach().clone(),
                    constraint=eps_constraint)
-        pyro.param("u_mu", self.init_mu.detach().clone())
-        pyro.param("u_sig", self.init_sig.detach().clone(),
+        pyro.param("u_mu", self.u_mu.detach().clone())
+        pyro.param("u_sig", self.u_sig.detach().clone(),
                    constraint=eps_constraint)
         self.ys = torch.tensor([])
 
@@ -136,7 +142,7 @@ class CESModel(ExperimentModel):
                                constraint=eps_constraint)
         u_mu = pyro.param("u_mu", self.init_mu.detach().clone())
         u_sig = pyro.param("u_sig", self.init_sig.detach().clone(),
-                               constraint=eps_constraint)
+                           constraint=eps_constraint)
         batch_shape = design.shape[:-2]
         with ExitStack() as stack:
             for plate in iter_plates_to_shape(batch_shape):
@@ -146,7 +152,7 @@ class CESModel(ExperimentModel):
             alpha_shape = batch_shape + (alpha_con.shape[-1],)
             pyro.sample("alpha", dist.Dirichlet(alpha_con.expand(alpha_shape)))
             pyro.sample("u", dist.LogNormal(u_mu.expand(batch_shape),
-                                                u_sig.expand(batch_shape)))
+                                            u_sig.expand(batch_shape)))
 
     def run_experiment(self, design, y=None):
         """
@@ -176,12 +182,15 @@ class CESModel(ExperimentModel):
         self.u_sig = pyro.param("u_sig").detach().clone()
 
     def get_params(self):
-        return torch.cat([
-            torch.flatten(self.rho_con),
-            torch.flatten(self.alpha_con),
-            torch.flatten(self.u_mu),
-            torch.flatten(self.u_sig),
-        ])
+        return torch.cat(
+            [
+                self.rho_con.reshape(self.n_parallel, -1),
+                self.alpha_con.reshape(self.n_parallel, -1),
+                self.u_mu.reshape(self.n_parallel, -1),
+                self.u_sig.reshape(self.n_parallel, -1),
+            ],
+            dim=-1
+        )
 
     def entropy(self):
         rho_dist = torch_dist.Dirichlet(self.rho_con)
