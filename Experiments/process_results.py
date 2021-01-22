@@ -11,6 +11,9 @@ def main(fpaths, dest):
 	rlqs = []
 	ruqs = []
 	rmeans = []
+	rstds = []
+	rmaxs = []
+	rmins = []
 	pstds = []
 
 	for fpath in fpaths:
@@ -22,14 +25,20 @@ def main(fpaths, dest):
 			rlq = []
 			ruq = []
 			rmean = []
+			rstd = []
+			rmax = []
+			rmin = []
 			pstd = []
 			for row in reader:
 				if "Action/MeanAction" in row: amean.append(row["Action/MeanAction"])
 				if "Action/StdAction" in row: astd.append(row["Action/StdAction"])
+				if "Return/MeanReturn" in row: rmean.append(row["Return/MeanReturn"])
+				if "Return/StdReturn" in row: rstd.append(row["Return/StdReturn"])
+				if "Return/MaxReturn" in row: rmax.append(row["Return/MaxReturn"])
+				if "Return/MinReturn" in row: rmin.append(row["Return/MinReturn"])
 				if "Return/MedianReturn" in row: rmedian.append(row["Return/MedianReturn"])
 				if "Return/LowerQuartileReturn" in row: rlq.append(row["Return/LowerQuartileReturn"])
 				if "Return/UpperQuartileReturn" in row: ruq.append(row["Return/UpperQuartileReturn"])
-				if "Evaluation/AverageReturn" in row: rmean.append(row["Evaluation/AverageReturn"])
 				if "Policy/MeanStd" in row: pstd.append(row["Policy/MeanStd"])
 
 			ameans.append(amean)
@@ -38,11 +47,15 @@ def main(fpaths, dest):
 			rlqs.append(rlq)
 			ruqs.append(ruq)
 			rmeans.append(rmean)
+			rstds.append(rstd)
+			rmaxs.append(rmax)
+			rmins.append(rmin)
 			pstds.append(pstd)
 	
 	np.savez_compressed(
-		dest, ameans=ameans, astds=astds, rmedians=rmedians, rlqs=rlqs,
-		ruqs=ruqs, rmeans=rmeans, pstds=pstd
+		"results.npz",
+		ameans=ameans, astds=astds, rmedians=rmedians, rlqs=rlqs, ruqs=ruqs,
+		rmeans=rmeans, rstds=rstds, rmaxs=rmaxs, rmins=rmins, pstds=pstds, 
 	)
 
 if __name__ == "__main__":

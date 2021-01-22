@@ -24,12 +24,12 @@ seeds = [126127, 911353, 783935, 631280, 100573, 677846, 692965, 516184, 165479,
          643024]
 
 
-@wrap_experiment(snapshot_mode='none')
+@wrap_experiment(snapshot_mode='last')
 def sac_ces(ctxt=None, seed=1):
     deterministic.set_seed(seed)
     pyro.set_rng_seed(seed)
     runner = LocalRunner(snapshot_config=ctxt)
-    n_parallel = 100
+    n_parallel = 1000
     budget = 1
     layer_size = 128
     design_space = spaces.Box(low=0.01, high=100, shape=(1, 1, 1, 6))
@@ -69,13 +69,13 @@ def sac_ces(ctxt=None, seed=1):
               gradient_steps_per_itr=1000,
               max_path_length=budget,
               replay_buffer=replay_buffer,
-              min_buffer_size=int(1e4),
+              min_buffer_size=int(n_parallel),
               target_update_tau=5e-3,
-              discount=0.99,
+              discount=1.0,
               buffer_batch_size=256,
               reward_scale=1.,
               steps_per_epoch=1,
-              num_evaluation_trajectories=1)
+              num_evaluation_trajectories=100)
 
     if torch.cuda.is_available():
         set_gpu_mode(True)
@@ -84,7 +84,7 @@ def sac_ces(ctxt=None, seed=1):
     sac.to()
     runner.setup(algo=sac, env=env, sampler_cls=LocalSampler,
                  worker_class=VectorWorker)
-    runner.train(n_epochs=100, batch_size=budget)
+    runner.train(n_epochs=10000, batch_size=n_parallel * budget)
 
 
 if __name__ == "__main__":
