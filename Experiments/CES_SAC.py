@@ -29,15 +29,30 @@ def sac_ces(ctxt=None, seed=1):
     deterministic.set_seed(seed)
     pyro.set_rng_seed(seed)
     runner = LocalRunner(snapshot_config=ctxt)
-    n_parallel = 1000
+    n_parallel = 100
     budget = 1
     layer_size = 128
     design_space = spaces.Box(low=0.01, high=100, shape=(1, 1, 1, 6))
     model_space = spaces.Box(low=-np.inf, high=np.inf, shape=(1, 7))
-    model = CESModel(n_parallel=n_parallel)
+    model = CESModel(n_parallel=n_parallel, n_elbo_steps=1000,
+                     n_elbo_samples=10)
     env = GarageEnv(
         normalize(
             DesignEnv(design_space, model_space, model, budget),
+            normalize_obs=False
+        )
+    )
+    true_model = pyro.condition(
+        model.make_model(),
+        {
+            "rho": torch.tensor([.9, .1]),
+            "alpha": torch.tensor([.2, .3, .5]),
+            "u": torch.tensor(10.)
+        },
+    )
+    eval_env = GarageEnv(
+        normalize(
+            DesignEnv(design_space, model_space, model, budget, true_model),
             normalize_obs=False
         )
     )
@@ -47,7 +62,7 @@ def sac_ces(ctxt=None, seed=1):
         hidden_sizes=[layer_size, layer_size],
         hidden_nonlinearity=nn.ReLU,
         output_nonlinearity=None,
-        init_std=np.sqrt(1/3),
+        init_std=np.sqrt(1 / 3),
         min_std=np.exp(-20.),
         max_std=np.exp(0.),
     )
@@ -75,7 +90,8 @@ def sac_ces(ctxt=None, seed=1):
               buffer_batch_size=256,
               reward_scale=1.,
               steps_per_epoch=1,
-              num_evaluation_trajectories=100)
+              num_evaluation_trajectories=n_parallel,
+              eval_env=eval_env)
 
     if torch.cuda.is_available():
         set_gpu_mode(True)

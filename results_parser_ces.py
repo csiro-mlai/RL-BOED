@@ -3,6 +3,7 @@ from __future__ import absolute_import, division, print_function
 import argparse
 import pickle
 import glob
+import os
 from collections import defaultdict, OrderedDict
 
 import numpy as np
@@ -10,9 +11,10 @@ import torch
 import matplotlib.pyplot as plt
 from matplotlib.ticker import MaxNLocator
 
-output_dir = "./run_outputs/ces/"
+output_dir = os.path.join(os.path.dirname(__file__), "run_outputs/ces/")
 cmap = plt.get_cmap("Paired")
 COLOURS = {'ace-grad': cmap(1),
+           'const': cmap(2),
            'pce-grad': cmap(3),
            'rand': cmap(4),
            'posterior-grad': cmap(5),
@@ -27,10 +29,10 @@ VALUE_LABELS = {"Entropy": "Posterior entropy",
                 "total_rmse": 'Total RMSE',
                 "Imax": "EIG lower bound"}
 LABELS = {'marginal': 'BO + marginal (baseline)', 'rand': 'Random design (baseline)', 'nmc': 'BOED NMC (baseline)',
-        'posterior-grad': "BA gradient", 'pce-grad': "PCE gradient", "rand": "Random", "ace-grad": "ACE gradient"}
+        'posterior-grad': "BA gradient", 'pce-grad': "PCE gradient", "const": "Constant", "ace-grad": "ACE gradient"}
 MARKERS = {'ace-grad': 'x',
            'pce-grad': '|',
-           'rand': '|',
+           'const': '|',
            'posterior-grad': '1',
            'marginal': '.'}
 
@@ -101,6 +103,7 @@ def main(fnames, findices, plot, percentile):
                     slope_rmse = torch.sqrt((slope_dist.mean - torch.tensor(10.)).pow(2) + slope_dist.variance)
                     total_rmse = torch.sqrt(rho_rmse**2 + alpha_rmse**2 + slope_rmse**2)
                     entropy = rho_dist.entropy() + alpha_dist.entropy() + slope_dist.entropy()
+                    design = results["d_star_design"]
                     try:
                         eig = -results['min loss']
                     except:
@@ -110,7 +113,7 @@ def main(fnames, findices, plot, percentile):
                             eig=torch.zeros(1)
 
                     output = {"rho_rmse": rho_rmse, "alpha_rmse": alpha_rmse, "slope_rmse": slope_rmse,
-                              "Entropy": entropy, "total_rmse": total_rmse, 'Imax': eig}
+                              "Entropy": entropy, "total_rmse": total_rmse, 'Imax': eig, 'design': design}
                     results_dict[results['typ']].append(output)
             except EOFError:
                 continue
@@ -128,9 +131,15 @@ def main(fnames, findices, plot, percentile):
             plt.figure(figsize=(5, 5))
             print(reformed[statistic].keys())
             for i, k in enumerate(reformed[statistic]):
-                e = reformed[statistic][k].squeeze()[1:]
+                e = reformed[statistic][k].squeeze()#[1:]
                 lower, centre, upper = upper_lower(e, percentile=percentile)
-                x = np.arange(2, e.shape[0]+2)
+                if statistic == "Entropy":
+                    print(lower, centre, upper)
+                # centre = np.mean(e, axis=1)
+                # std = np.std(e, axis=1)
+                # upper = centre + std
+                # lower = centre - std
+                x = np.arange(1, e.shape[0]+1)
                 plt.plot(x, centre, linestyle='-', markersize=12, color=COLOURS[k], marker=MARKERS[k], linewidth=1.5)
                 plt.fill_between(x, upper, lower, color=COLOURS[k], alpha=0.15)
             plt.xlabel("Step", fontsize=23)

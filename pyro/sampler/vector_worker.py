@@ -31,15 +31,17 @@ class VectorWorker(DefaultWorker):
         self._prev_obs = self.env.reset(n_parallel=self._n_parallel)
         self.agent.reset()
 
-    def step_rollout(self):
+    def step_rollout(self, deterministic):
         """Take a vector of single time-steps in the current rollout
 
         Returns:
             bool: True iff the path is done, either due to the environment
-            indicating termination of due to reaching `max_path_length`.
+            indicating termination or due to reaching `max_path_length`.
         """
         if self._path_length < self._max_path_length:
             a, agent_info = self.agent.get_actions(self._prev_obs)
+            if deterministic and 'mean' in agent_info:
+                a = agent_info['mean']
             a_shape = (self._n_parallel,) + self.env.action_space.shape[1:]
             next_o, r, d, env_info = self.env.step(a.reshape(a_shape))
             self._observations.append(self._prev_obs)
@@ -94,3 +96,14 @@ class VectorWorker(DefaultWorker):
                                dict(agent_infos),
                                np.concatenate(lengths).astype('i'))
 
+    def rollout(self, deterministic=False):
+        """Sample a single rollout of the agent in the environment.
+
+        Returns:
+            garage.TrajectoryBatch: The collected trajectory.
+
+        """
+        self.start_rollout()
+        while not self.step_rollout(deterministic):
+            pass
+        return self.collect_rollout()

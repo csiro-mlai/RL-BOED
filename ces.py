@@ -120,12 +120,13 @@ def main(num_steps, num_parallel, experiment_name, typs, seed, lengthscale, num_
         raise ValueError("Invalid log level: {}".format(loglevel))
     logging.basicConfig(level=numeric_level)
 
-    output_dir = "./run_outputs/ces/"
+    output_dir = "run_outputs/ces/"
     if not experiment_name:
         experiment_name = output_dir+"{}".format(datetime.datetime.now().isoformat())
     else:
         experiment_name = output_dir+experiment_name
     results_file = experiment_name + '.result_stream.pickle'
+    results_file = os.path.join(os.path.dirname(__file__), results_file)
     try:
         os.remove(results_file)
     except OSError:
@@ -149,6 +150,7 @@ def main(num_steps, num_parallel, experiment_name, typs, seed, lengthscale, num_
 
         guide = marginal_guide(marginal_mu_init, marginal_log_sigma_init, (num_parallel, num_acquisition, 1), "y")
 
+        # pyro.set_rng_seed(10)
         prior = make_ces_model(torch.ones(num_parallel, 1, 2), torch.ones(num_parallel, 1, 3),
                                torch.ones(num_parallel, 1), 3.*torch.ones(num_parallel, 1), observation_sd)
         rho_concentration = torch.ones(num_parallel, 1, 2)
@@ -303,17 +305,23 @@ def main(num_steps, num_parallel, experiment_name, typs, seed, lengthscale, num_
             elif typ == 'rand':
                 d_star_design = .01 + 99.99 * torch.rand((num_parallel, 1, 1, design_dim))
 
+            elif typ == 'const':
+                d_star_design = torch.tensor([96.1118, 23.8202,  2.2753, 96.3520, 24.9322,  2.0734]).expand((num_parallel,1,1,6))
+
+
             elapsed = time.time() - t
             logging.info('elapsed design time {}'.format(elapsed))
             results['design_time'] = elapsed
             results['d_star_design'] = d_star_design
             logging.info('design {} {}'.format(d_star_design.squeeze(), d_star_design.shape))
             d_star_designs = torch.cat([d_star_designs, d_star_design], dim=-2)
+            # pyro.set_rng_seed(10)
             y = true_model(d_star_design)
             ys = torch.cat([ys, y], dim=-1)
             logging.info('ys {} {}'.format(ys.squeeze(), ys.shape))
             results['y'] = y
 
+            # pyro.set_rng_seed(10)
             elbo_learn(
                 prior, d_star_designs, ["y"], ["rho", "alpha", "slope"], elbo_n_samples, elbo_n_steps,
                 partial(elboguide, dim=num_parallel), {"y": ys}, optim.Adam({"lr": elbo_lr})

@@ -15,6 +15,8 @@ def main(fpaths, dest):
 	rmaxs = []
 	rmins = []
 	pstds = []
+	emeans = []
+	estds = []
 
 	for fpath in fpaths:
 		with open(fpath, newline='') as csvfile:
@@ -29,6 +31,8 @@ def main(fpaths, dest):
 			rmax = []
 			rmin = []
 			pstd = []
+			emean = []
+			estd = []
 			for row in reader:
 				if "Action/MeanAction" in row: amean.append(row["Action/MeanAction"])
 				if "Action/StdAction" in row: astd.append(row["Action/StdAction"])
@@ -40,6 +44,8 @@ def main(fpaths, dest):
 				if "Return/LowerQuartileReturn" in row: rlq.append(row["Return/LowerQuartileReturn"])
 				if "Return/UpperQuartileReturn" in row: ruq.append(row["Return/UpperQuartileReturn"])
 				if "Policy/MeanStd" in row: pstd.append(row["Policy/MeanStd"])
+				if "Evaluation/AverageReturn" in row: emean.append(row["Evaluation/AverageReturn"])
+				if "Evaluation/StdReturn" in row: estd.append(row["Evaluation/StdReturn"])
 
 			ameans.append(amean)
 			astds.append(astd)
@@ -51,11 +57,14 @@ def main(fpaths, dest):
 			rmaxs.append(rmax)
 			rmins.append(rmin)
 			pstds.append(pstd)
+			emeans.append(emean)
+			estds.append(estd)
 	
 	np.savez_compressed(
 		"results.npz",
 		ameans=ameans, astds=astds, rmedians=rmedians, rlqs=rlqs, ruqs=ruqs,
-		rmeans=rmeans, rstds=rstds, rmaxs=rmaxs, rmins=rmins, pstds=pstds, 
+		rmeans=rmeans, rstds=rstds, rmaxs=rmaxs, rmins=rmins, pstds=pstds,
+		emeans=emeans, estds=estds
 	)
 
 if __name__ == "__main__":

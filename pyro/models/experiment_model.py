@@ -11,8 +11,7 @@ import pyro.distributions as dist
 import torch.distributions as torch_dist
 import pyro.optim as optim
 
-epsilon = torch.tensor(1e-9)
-eps_constraint = torch_dist.constraints.greater_than(epsilon)
+epsilon = torch.tensor(2**-22)
 
 
 class ExperimentModel(ABC):
@@ -85,12 +84,12 @@ class CESModel(ExperimentModel):
                 del param_store[name]
 
         pyro.param("rho_con", self.rho_con.detach().clone(),
-                   constraint=eps_constraint)
+                   constraint=torch_dist.constraints.positive)
         pyro.param("alpha_con", self.alpha_con.detach().clone(),
-                   constraint=eps_constraint)
+                   constraint=torch_dist.constraints.positive)
         pyro.param("u_mu", self.u_mu.detach().clone())
         pyro.param("u_sig", self.u_sig.detach().clone(),
-                   constraint=eps_constraint)
+                   constraint=torch_dist.constraints.positive)
         self.ys = torch.tensor([])
 
     def make_model(self):
@@ -137,12 +136,12 @@ class CESModel(ExperimentModel):
 
     def guide(self, design):
         rho_con = pyro.param("rho_con", self.init_rho.detach().clone(),
-                             constraint=eps_constraint)
+                             constraint=torch_dist.constraints.positive)
         alpha_con = pyro.param("alpha_con", self.init_alpha.detach().clone(),
-                               constraint=eps_constraint)
+                               constraint=torch_dist.constraints.positive)
         u_mu = pyro.param("u_mu", self.init_mu.detach().clone())
         u_sig = pyro.param("u_sig", self.init_sig.detach().clone(),
-                           constraint=eps_constraint)
+                           constraint=torch_dist.constraints.positive)
         batch_shape = design.shape[:-2]
         with ExitStack() as stack:
             for plate in iter_plates_to_shape(batch_shape):
@@ -160,6 +159,7 @@ class CESModel(ExperimentModel):
         a value predicted by the model.
         """
         # create model from up-to-date params
+        # pyro.set_rng_seed(10)
         cur_model = self.make_model()
 
         # infer experimental outcome given design and model
@@ -169,6 +169,7 @@ class CESModel(ExperimentModel):
         self.ys = torch.cat([self.ys, y], dim=-1)
 
         # learn the posterior given design and outcome
+        # pyro.set_rng_seed(10)
         elbo_learn(
             cur_model, design, [self.obs_label], ["rho", "alpha", "u"],
             self.n_elbo_samples, self.n_elbo_steps, self.guide,
