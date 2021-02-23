@@ -61,7 +61,7 @@ def main(fpaths, dest):
 			estds.append(estd)
 	
 	np.savez_compressed(
-		"results.npz",
+		dest,
 		ameans=ameans, astds=astds, rmedians=rmedians, rlqs=rlqs, ruqs=ruqs,
 		rmeans=rmeans, rstds=rstds, rmaxs=rmaxs, rmins=rmins, pstds=pstds,
 		emeans=emeans, estds=estds

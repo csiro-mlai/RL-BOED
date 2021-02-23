@@ -13,26 +13,28 @@ import logging
 import pyro
 import pyro.optim as optim
 import pyro.distributions as dist
-from pyro.contrib.util import iter_plates_to_shape, rexpand, rmv
+from pyro.contrib.util import iter_plates_to_shape, lexpand, rexpand, rmv
 from pyro.contrib.oed.eig import marginal_eig, elbo_learn, nmc_eig, pce_eig
 import pyro.contrib.gp as gp
-from pyro.contrib.oed.differentiable_eig import _differentiable_posterior_loss, differentiable_pce_eig, _differentiable_ace_eig_loss
+from pyro.contrib.oed.differentiable_eig import _differentiable_posterior_loss, differentiable_pce_eig, \
+    _differentiable_ace_eig_loss
 from pyro.contrib.oed.eig import opt_eig_ape_loss
 from pyro.util import is_bad
 
 from ces_gradients import PosteriorGuide, LinearPosteriorGuide
 
-
 # TODO read from torch float spec
-epsilon = torch.tensor(2**-22)
+epsilon = torch.tensor(2 ** -22)
 
 
 def get_git_revision_hash():
     return subprocess.check_output(['git', 'rev-parse', 'HEAD'])
 
 
-def make_ces_model(rho_concentration, alpha_concentration, slope_mu, slope_sigma, observation_sd, observation_label="y"):
+def make_ces_model(rho_concentration, alpha_concentration, slope_mu, slope_sigma, observation_sd,
+                   observation_label="y"):
     def ces_model(design):
+        # pyro.set_rng_seed(10)
         if is_bad(design):
             raise ArithmeticError("bad design, contains nan or inf")
         batch_shape = design.shape[:-2]
@@ -46,8 +48,8 @@ def make_ces_model(rho_concentration, alpha_concentration, slope_mu, slope_sigma
             slope = pyro.sample("slope", dist.LogNormal(slope_mu.expand(batch_shape), slope_sigma.expand(batch_shape)))
             rho, slope = rexpand(rho, design.shape[-2]), rexpand(slope, design.shape[-2])
             d1, d2 = design[..., 0:3], design[..., 3:6]
-            U1rho = (rmv(d1.pow(rho.unsqueeze(-1)), alpha)).pow(1./rho)
-            U2rho = (rmv(d2.pow(rho.unsqueeze(-1)), alpha)).pow(1./rho)
+            U1rho = (rmv(d1.pow(rho.unsqueeze(-1)), alpha)).pow(1. / rho)
+            U2rho = (rmv(d2.pow(rho.unsqueeze(-1)), alpha)).pow(1. / rho)
             mean = slope * (U1rho - U2rho)
             sd = slope * observation_sd * (1 + torch.norm(d1 - d2, dim=-1, p=2))
 
@@ -70,16 +72,18 @@ def make_learn_xi_model(model):
         design = pyro.param("xi")
         design = design.expand(design_prototype.shape)
         return model(design)
+
     return model_learn_xi
 
 
 def elboguide(design, dim=10):
+    # pyro.set_rng_seed(10)
     rho_concentration = pyro.param("rho_concentration", torch.ones(dim, 1, 2),
                                    constraint=torch.distributions.constraints.positive)
     alpha_concentration = pyro.param("alpha_concentration", torch.ones(dim, 1, 3),
                                      constraint=torch.distributions.constraints.positive)
     slope_mu = pyro.param("slope_mu", torch.ones(dim, 1))
-    slope_sigma = pyro.param("slope_sigma", 3.*torch.ones(dim, 1),
+    slope_sigma = pyro.param("slope_sigma", 3. * torch.ones(dim, 1),
                              constraint=torch.distributions.constraints.positive)
     batch_shape = design.shape[:-2]
     with ExitStack() as stack:
@@ -97,19 +101,21 @@ def marginal_guide(mu_init, log_sigma_init, shape, label):
     def guide(design, observation_labels, target_labels):
         mu = pyro.param("marginal_mu", mu_init * torch.ones(*shape))
         log_sigma = pyro.param("marginal_log_sigma", log_sigma_init * torch.ones(*shape))
-        ends = pyro.param("marginal_ends", 1./3 * torch.ones(*shape, 3),
+        ends = pyro.param("marginal_ends", 1. / 3 * torch.ones(*shape, 3),
                           constraint=torch.distributions.constraints.simplex)
         response_dist = dist.CensoredSigmoidNormalEnds(
             loc=mu, scale=torch.exp(log_sigma), upper_lim=1. - epsilon, lower_lim=epsilon,
             p0=ends[..., 0], p1=ends[..., 1], p2=ends[..., 2]
         ).to_event(1)
         pyro.sample(label, response_dist)
+
     return guide
 
 
 def neg_loss(loss):
     def new_loss(*args, **kwargs):
         return (-a for a in loss(*args, **kwargs))
+
     return new_loss
 
 
@@ -122,9 +128,9 @@ def main(num_steps, num_parallel, experiment_name, typs, seed, lengthscale, num_
 
     output_dir = "run_outputs/ces/"
     if not experiment_name:
-        experiment_name = output_dir+"{}".format(datetime.datetime.now().isoformat())
+        experiment_name = output_dir + "{}".format(datetime.datetime.now().isoformat())
     else:
-        experiment_name = output_dir+experiment_name
+        experiment_name = output_dir + experiment_name
     results_file = experiment_name + '.result_stream.pickle'
     results_file = os.path.join(os.path.dirname(__file__), results_file)
     try:
@@ -140,7 +146,7 @@ def main(num_steps, num_parallel, experiment_name, typs, seed, lengthscale, num_
         if seed >= 0:
             pyro.set_rng_seed(seed)
         else:
-            seed = int(torch.rand(tuple()) * 2**30)
+            seed = int(torch.rand(tuple()) * 2 ** 30)
             pyro.set_rng_seed(seed)
         marginal_mu_init, marginal_log_sigma_init = 0., 6.
         oed_n_samples, oed_n_steps, oed_final_n_samples, oed_lr = 10, 1250, 2000, [0.1, 0.01, 0.001]
@@ -150,12 +156,9 @@ def main(num_steps, num_parallel, experiment_name, typs, seed, lengthscale, num_
 
         guide = marginal_guide(marginal_mu_init, marginal_log_sigma_init, (num_parallel, num_acquisition, 1), "y")
 
-        # pyro.set_rng_seed(10)
-        prior = make_ces_model(torch.ones(num_parallel, 1, 2), torch.ones(num_parallel, 1, 3),
-                               torch.ones(num_parallel, 1), 3.*torch.ones(num_parallel, 1), observation_sd)
         rho_concentration = torch.ones(num_parallel, 1, 2)
         alpha_concentration = torch.ones(num_parallel, 1, 3)
-        slope_mu, slope_sigma = torch.ones(num_parallel, 1), 3.*torch.ones(num_parallel, 1)
+        slope_mu, slope_sigma = torch.ones(num_parallel, 1), 3. * torch.ones(num_parallel, 1)
 
         true_model = pyro.condition(make_ces_model(rho_concentration, alpha_concentration, slope_mu, slope_sigma,
                                                    observation_sd),
@@ -198,8 +201,8 @@ def main(num_steps, num_parallel, experiment_name, typs, seed, lengthscale, num_
                 elif typ == 'nmc':
                     def f(X):
                         return torch.cat([nmc_eig(model, X[:, 25 * i:25 * (i + 1), ...], ["y"],
-                                                  ["rho", "alpha", "slope"], N=70*70, M=70)
-                                          for i in range(X.shape[1]//25)], dim=1)
+                                                  ["rho", "alpha", "slope"], N=70 * 70, M=70)
+                                          for i in range(X.shape[1] // 25)], dim=1)
 
                 y = f(X)
 
@@ -235,7 +238,7 @@ def main(num_steps, num_parallel, experiment_name, typs, seed, lengthscale, num_
                         mean = rmv(LiK.transpose(-1, -2), Liy.squeeze(-1))
                         KXnewXnew = kernel(Xnew)
                         var = (KXnewXnew - LiK.transpose(-1, -2).matmul(LiK)).diagonal(dim1=-2, dim2=-1)
-                        ucb = -(mean + 2*var.sqrt())
+                        ucb = -(mean + 2 * var.sqrt())
                         loss = ucb.sum()
                         torch.autograd.backward(unconstrained_Xnew,
                                                 torch.autograd.grad(loss, unconstrained_Xnew, retain_graph=True))
@@ -264,13 +267,15 @@ def main(num_steps, num_parallel, experiment_name, typs, seed, lengthscale, num_
                     # Suggested num_gradient_steps = 5000
                     posterior_guide = LinearPosteriorGuide((num_parallel, num_acquisition))
                     posterior_guide.set_prior(rho_concentration, alpha_concentration, slope_mu, slope_sigma)
-                    loss = _differentiable_posterior_loss(model_learn_xi, posterior_guide, ["y"], ["rho", "alpha", "slope"])
+                    loss = _differentiable_posterior_loss(model_learn_xi, posterior_guide, ["y"],
+                                                          ["rho", "alpha", "slope"])
 
                 elif typ == 'pce-grad':
 
                     # Suggested num_gradient_steps = 2500
                     eig_loss = lambda d, N, **kwargs: differentiable_pce_eig(
-                        model=model_learn_xi, design=d, observation_labels=["y"], target_labels=["rho", "alpha", "slope"],
+                        model=model_learn_xi, design=d, observation_labels=["y"],
+                        target_labels=["rho", "alpha", "slope"],
                         N=N, M=num_contrast_samples, **kwargs)
                     loss = neg_loss(eig_loss)
 
@@ -288,7 +293,8 @@ def main(num_steps, num_parallel, experiment_name, typs, seed, lengthscale, num_
                 xi_init = torch.cat([xi_init, xi_init], dim=-1)
                 pyro.param("xi", xi_init, constraint=constraint)
                 pyro.get_param_store().replace_param("xi", xi_init, pyro.param("xi"))
-                design_prototype = torch.zeros(num_parallel, num_acquisition, 1, design_dim)  # this is annoying, code needs refactor
+                design_prototype = torch.zeros(num_parallel, num_acquisition, 1,
+                                               design_dim)  # this is annoying, code needs refactor
 
                 start_lr, end_lr = grad_start_lr, grad_end_lr
                 gamma = (end_lr / start_lr) ** (1 / num_gradient_steps)
@@ -306,9 +312,44 @@ def main(num_steps, num_parallel, experiment_name, typs, seed, lengthscale, num_
                 d_star_design = .01 + 99.99 * torch.rand((num_parallel, 1, 1, design_dim))
 
             elif typ == 'const':
-                d_star_design = torch.tensor([96.1118, 23.8202,  2.2753, 96.3520, 24.9322,  2.0734]).expand((num_parallel,1,1,6))
+                import numpy as np
+                rl_data = np.load("/home/bla363/boed/Experiments/data/local/experiment/sac_ces_441/posteriors.npz")
+
+                # design_array = []
+                # y_array = []
+                # rng_array = []
+                # with open("/home/bla363/boed/run_outputs/ces/repr-pce-grad-markov.result_stream.pickle", 'rb') as f:
+                #     try:
+                #         while True:
+                #             data = pickle.load(f)
+                #             design_array.append(data['d_star_design'])
+                #             y_array.append(data['y'])
+                #             rng_array.append(data['rng_state'])
+                #     except EOFError:
+                #         pass
+                # d_star_design = design_array[step]
+                # torch.set_rng_state(rng_array[step])
+
+                design_array = torch.tensor(rl_data['denormalised_designs'])
+                y_array = torch.tensor(rl_data['ys'])
+                d_star_design = design_array[step].expand(
+                    (num_parallel, 1, 1, 6))
 
 
+            # results['rng_state'] = torch.get_rng_state()
+            # update using only the result of the first experiment
+            markovian = False
+            if markovian:
+                d_star_designs = torch.tensor([])
+                ys = torch.tensor([])
+                prior = make_ces_model(rho_concentration.detach().clone(),
+                                       alpha_concentration.detach().clone(),
+                                       slope_mu.detach().clone(),
+                                       slope_sigma.detach().clone(),
+                                       observation_sd)
+            else:
+                prior = make_ces_model(torch.ones(num_parallel, 1, 2), torch.ones(num_parallel, 1, 3),
+                                       torch.ones(num_parallel, 1), 3. * torch.ones(num_parallel, 1), observation_sd)
             elapsed = time.time() - t
             logging.info('elapsed design time {}'.format(elapsed))
             results['design_time'] = elapsed
@@ -317,6 +358,8 @@ def main(num_steps, num_parallel, experiment_name, typs, seed, lengthscale, num_
             d_star_designs = torch.cat([d_star_designs, d_star_design], dim=-2)
             # pyro.set_rng_seed(10)
             y = true_model(d_star_design)
+            if typ == 'const':
+                y = y * 0 + y_array[step]
             ys = torch.cat([ys, y], dim=-1)
             logging.info('ys {} {}'.format(ys.squeeze(), ys.shape))
             results['y'] = y
@@ -330,6 +373,19 @@ def main(num_steps, num_parallel, experiment_name, typs, seed, lengthscale, num_
             alpha_concentration = pyro.param("alpha_concentration").detach().data.clone()
             slope_mu = pyro.param("slope_mu").detach().data.clone()
             slope_sigma = pyro.param("slope_sigma").detach().data.clone()
+
+            realistic = False
+            if realistic:
+                rho_concentration = lexpand(rho_concentration[0], num_parallel)
+                alpha_concentration = lexpand(alpha_concentration[0], num_parallel)
+                slope_mu = lexpand(slope_mu[0], num_parallel)
+                slope_sigma = lexpand(slope_sigma[0], num_parallel)
+                pstore = pyro.get_param_store()
+                pstore["rho_concentration"] = rho_concentration.detach().data.clone()
+                pstore["alpha_concentration"] = alpha_concentration.detach().data.clone()
+                pstore["slope_mu"] = slope_mu.detach().data.clone()
+                pstore["slope_sigma"] = slope_sigma.detach().data.clone()
+
             logging.info("rho_concentration {} \n alpha_concentration {} \n slope_mu {} \n slope_sigma {}".format(
                 rho_concentration.squeeze(), alpha_concentration.squeeze(), slope_mu.squeeze(), slope_sigma.squeeze()))
             results['rho_concentration'], results['alpha_concentration'] = rho_concentration, alpha_concentration

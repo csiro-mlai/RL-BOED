@@ -86,7 +86,7 @@ class VectorWorker(DefaultWorker):
             agent_infos[k] = np.concatenate(v)
         zs = np.zeros((self._n_parallel,))
         for k, v in env_infos.items():
-            env_infos[k] = v + zs
+            env_infos[k] = np.stack(v, axis=-1) + zs
         lengths = self._lengths
         self._lengths = []
         return TrajectoryBatch(self.env.spec, np.concatenate(observations),

@@ -32,7 +32,7 @@ class DesignEnv(Env):
         self.n_parallel = n_parallel
         self.model.reset(n_parallel)
         self.exp_idx = 0
-        return self._get_obs()
+        return self.get_obs()
 
     def step(self, action):
         design = torch.tensor(action)
@@ -67,16 +67,17 @@ class DesignEnv(Env):
         #     )
         self.model.run_experiment(design, y)
         self.exp_idx += 1
-        obs = self._get_obs()
+        obs = self.get_obs()
         reward = torch.zeros((self.n_parallel,))
         done = self.terminal()
         if done:
             reward = -self.model.entropy().reshape((self.n_parallel,))
         done = done * torch.ones_like(reward, dtype=torch.bool)
-        info = {}
+        y = y if y is not None else torch.zeros_like(reward)
+        info = {'y': y}
         return obs, reward, done, info
 
-    def _get_obs(self):
+    def get_obs(self):
         return np.array(self.model.get_params())
 
     def terminal(self):
