@@ -34,7 +34,8 @@ MARKERS = {'ace-grad': 'x',
            'pce-grad': '|',
            'const': '|',
            'posterior-grad': '1',
-           'marginal': '.'}
+           'marginal': '.',
+           'rand': '+'}
 
 S = 3
 
@@ -135,10 +136,10 @@ def main(fnames, findices, plot, percentile):
                 lower, centre, upper = upper_lower(e, percentile=percentile)
                 if statistic == "Entropy":
                     print(lower, centre, upper)
-                # centre = np.mean(e, axis=1)
-                # std = np.std(e, axis=1)
-                # upper = centre + std
-                # lower = centre - std
+                centre = np.mean(e, axis=1)
+                std = np.std(e, axis=1)
+                upper = centre + std
+                lower = centre - std
                 x = np.arange(1, e.shape[0]+1)
                 plt.plot(x, centre, linestyle='-', markersize=12, color=COLOURS[k], marker=MARKERS[k], linewidth=1.5)
                 plt.fill_between(x, upper, lower, color=COLOURS[k], alpha=0.15)

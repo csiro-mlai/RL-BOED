@@ -39,7 +39,9 @@ def sac_ces(ctxt=None, n_parallel=1, budget=1, seq_length=1, n_rl_itr=1,
     layer_size = 128
     design_space = spaces.Box(low=0.01, high=100, shape=(1, 1, 1, 6))
     model_space = spaces.Box(low=-np.inf, high=np.inf, shape=(1, 7))
+    recorded_data = False
     markovian = False
+    reset_policy = True
 
     model = CESModel(n_parallel=n_parallel, n_elbo_steps=1000,
                      n_elbo_samples=10, markovian=markovian)
@@ -51,21 +53,25 @@ def sac_ces(ctxt=None, n_parallel=1, budget=1, seq_length=1, n_rl_itr=1,
     )
     posteriors.append(env.get_obs()[:1])
 
-    policy = TanhGaussianMLPPolicy(
-        env_spec=env.spec,
-        hidden_sizes=[layer_size, layer_size],
-        hidden_nonlinearity=nn.ReLU,
-        output_nonlinearity=None,
-        init_std=np.sqrt(1 / 3),
-        min_std=np.exp(-20.),
-        max_std=np.exp(0.),
-    )
-    qf1 = ContinuousMLPQFunction(env_spec=env.spec,
-                                 hidden_sizes=[layer_size, layer_size],
-                                 hidden_nonlinearity=F.relu)
-    qf2 = ContinuousMLPQFunction(env_spec=env.spec,
-                                 hidden_sizes=[layer_size, layer_size],
-                                 hidden_nonlinearity=F.relu)
+    def make_policy():
+        return TanhGaussianMLPPolicy(
+            env_spec=env.spec,
+            hidden_sizes=[layer_size, layer_size],
+            hidden_nonlinearity=nn.ReLU,
+            output_nonlinearity=None,
+            init_std=np.sqrt(1 / 3),
+            min_std=np.exp(-20.),
+            max_std=np.exp(0.),
+        )
+
+    def make_q_func():
+        return ContinuousMLPQFunction(env_spec=env.spec,
+                                      hidden_sizes=[layer_size, layer_size],
+                                      hidden_nonlinearity=F.relu)
+
+    policy = make_policy()
+    qf1 = make_q_func()
+    qf2 = make_q_func()
     if torch.cuda.is_available():
         set_gpu_mode(True)
     else:
@@ -90,7 +96,6 @@ def sac_ces(ctxt=None, n_parallel=1, budget=1, seq_length=1, n_rl_itr=1,
                 normalize_obs=False
             )
         )
-
 
         replay_buffer = PathBuffer(capacity_in_transitions=int(1e6))
 
@@ -125,7 +130,6 @@ def sac_ces(ctxt=None, n_parallel=1, budget=1, seq_length=1, n_rl_itr=1,
         d_shape = (n_parallel,) + env.action_space.shape[1:]
 
         # if we want to replay previously seen experiments
-        recorded_data = False
         if recorded_data:
             rl_data = np.load("/home/bla363/boed/Experiments/data/local/experiment/sac_ces_431/posteriors.npz")
             design_array = torch.tensor(rl_data['normalised_designs'])
@@ -140,7 +144,7 @@ def sac_ces(ctxt=None, n_parallel=1, budget=1, seq_length=1, n_rl_itr=1,
         infogains.append(infogain)
         denormalised_designs.append(np.array(model.ds[:1, 0, -1]))
 
-        #save experiment results
+        # save experiment results
         np.savez_compressed(
             output_file,
             posteriors=np.concatenate(posteriors),
@@ -189,6 +193,10 @@ def sac_ces(ctxt=None, n_parallel=1, budget=1, seq_length=1, n_rl_itr=1,
                 normalize_obs=False
             )
         )
+        if reset_policy:
+            policy = make_policy()
+            qf1 = make_q_func()
+            qf2 = make_q_func()
 
 
 if __name__ == "__main__":

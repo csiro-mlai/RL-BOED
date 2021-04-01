@@ -289,8 +289,10 @@ def main(num_steps, num_parallel, experiment_name, typs, seed, lengthscale, num_
                     loss = neg_loss(eig_loss)
 
                 constraint = torch.distributions.constraints.interval(1e-6, 100.)
-                xi_init = .01 + 99.99 * torch.rand((num_parallel, num_acquisition, 1, design_dim // 2))
-                xi_init = torch.cat([xi_init, xi_init], dim=-1)
+                # xi_init = .01 + 99.99 * torch.rand((num_parallel, num_acquisition, 1, design_dim // 2))
+                # xi_init = torch.cat([xi_init, xi_init], dim=-1)
+                xi_init = .01 + 99.99 * torch.rand((num_parallel, num_acquisition, 1, design_dim))
+                logging.info('init_design {} {}'.format(xi_init.squeeze(), xi_init.shape))
                 pyro.param("xi", xi_init, constraint=constraint)
                 pyro.get_param_store().replace_param("xi", xi_init, pyro.param("xi"))
                 design_prototype = torch.zeros(num_parallel, num_acquisition, 1,
@@ -310,33 +312,32 @@ def main(num_steps, num_parallel, experiment_name, typs, seed, lengthscale, num_
 
             elif typ == 'rand':
                 d_star_design = .01 + 99.99 * torch.rand((num_parallel, 1, 1, design_dim))
+                d_star_design = lexpand(d_star_design[0], num_parallel)
 
             elif typ == 'const':
-                import numpy as np
-                rl_data = np.load("/home/bla363/boed/Experiments/data/local/experiment/sac_ces_441/posteriors.npz")
+                # import numpy as np
+                # rl_data = np.load("/home/bla363/boed/Experiments/data/local/experiment/sac_ces_452/posteriors.npz")
+                # design_array = torch.tensor(rl_data['denormalised_designs'])
+                # y_array = torch.tensor(rl_data['ys'])
 
-                # design_array = []
-                # y_array = []
-                # rng_array = []
-                # with open("/home/bla363/boed/run_outputs/ces/repr-pce-grad-markov.result_stream.pickle", 'rb') as f:
-                #     try:
-                #         while True:
-                #             data = pickle.load(f)
-                #             design_array.append(data['d_star_design'])
-                #             y_array.append(data['y'])
-                #             rng_array.append(data['rng_state'])
-                #     except EOFError:
-                #         pass
-                # d_star_design = design_array[step]
+                design_array = []
+                y_array = []
+                rng_array = []
+                with open("/home/bla363/boed/run_outputs/ces/repr-pce-grad-1.result_stream.pickle", 'rb') as f:
+                    try:
+                        while True:
+                            data = pickle.load(f)
+                            design_array.append(data['d_star_design'])
+                            y_array.append(data['y'])
+                            # rng_array.append(data['rng_state'])
+                    except EOFError:
+                        pass
                 # torch.set_rng_state(rng_array[step])
 
-                design_array = torch.tensor(rl_data['denormalised_designs'])
-                y_array = torch.tensor(rl_data['ys'])
-                d_star_design = design_array[step].expand(
-                    (num_parallel, 1, 1, 6))
+                d_star_design = lexpand(design_array[step][0], num_parallel)
 
 
-            # results['rng_state'] = torch.get_rng_state()
+            results['rng_state'] = torch.get_rng_state()
             # update using only the result of the first experiment
             markovian = False
             if markovian:
@@ -355,24 +356,35 @@ def main(num_steps, num_parallel, experiment_name, typs, seed, lengthscale, num_
             results['design_time'] = elapsed
             results['d_star_design'] = d_star_design
             logging.info('design {} {}'.format(d_star_design.squeeze(), d_star_design.shape))
+            d_star_design = lexpand(d_star_design[0], num_parallel)
             d_star_designs = torch.cat([d_star_designs, d_star_design], dim=-2)
             # pyro.set_rng_seed(10)
             y = true_model(d_star_design)
-            if typ == 'const':
-                y = y * 0 + y_array[step]
+            # if typ == 'const':
+            #     y = y * 0 + lexpand(y_array[step][0], num_parallel)
             ys = torch.cat([ys, y], dim=-1)
             logging.info('ys {} {}'.format(ys.squeeze(), ys.shape))
             results['y'] = y
 
             # pyro.set_rng_seed(10)
-            elbo_learn(
+            loss = elbo_learn(
                 prior, d_star_designs, ["y"], ["rho", "alpha", "slope"], elbo_n_samples, elbo_n_steps,
                 partial(elboguide, dim=num_parallel), {"y": ys}, optim.Adam({"lr": elbo_lr})
             )
+            mindex = loss.argmin()
             rho_concentration = pyro.param("rho_concentration").detach().data.clone()
             alpha_concentration = pyro.param("alpha_concentration").detach().data.clone()
             slope_mu = pyro.param("slope_mu").detach().data.clone()
             slope_sigma = pyro.param("slope_sigma").detach().data.clone()
+            if markovian:
+                rho_concentration = pyro.param("rho_concentration")[mindex].detach().data.clone()
+                rho_concentration = lexpand(rho_concentration, num_parallel)
+                alpha_concentration = pyro.param("alpha_concentration")[mindex].detach().data.clone()
+                alpha_concentration = lexpand(alpha_concentration, num_parallel)
+                slope_mu = pyro.param("slope_mu")[mindex].detach().data.clone()
+                slope_mu = lexpand(slope_mu, num_parallel)
+                slope_sigma = pyro.param("slope_sigma")[mindex].detach().data.clone()
+                slope_sigma = lexpand(slope_sigma, num_parallel)
 
             realistic = False
             if realistic:

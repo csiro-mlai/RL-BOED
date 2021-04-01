@@ -13,10 +13,11 @@ from matplotlib.ticker import MaxNLocator
 
 output_dir = os.path.join(os.path.dirname(__file__), "run_outputs/ces/")
 cmap = plt.get_cmap("Paired")
-COLOURS = {'repr-pce-grad': cmap(1),
-           'repr-pce-grad-markov': cmap(2),
-           'repr-const-markov': cmap(3),
-           'repr-const-nm': cmap(4),
+COLOURS = {'rand': cmap(1),
+           'const': cmap(3),
+           'const-1': cmap(4),
+           'const-2': cmap(5),
+           'const-3': cmap(6),
            }
 VALUE_LABELS = {"Entropy": "Posterior entropy",
                 "L2 distance": "Expected L2 distance from posterior to truth",
@@ -27,12 +28,13 @@ VALUE_LABELS = {"Entropy": "Posterior entropy",
                 "slope_rmse": 'RMSE in $u$ estimate',
                 "total_rmse": 'Total RMSE',
                 "Imax": "EIG lower bound"}
-LABELS = {'repr-pce-grad': 'non-Markovian', 'repr-pce-grad-markov': 'Markovian',
-          'repr-const-markov': 'Type-2 Markovian', 'repr-const-nm': 'Type-2 NM',}
-MARKERS = {'repr-pce-grad': 'x',
-           'repr-pce-grad-markov': '|',
-           'repr-const-markov': 'o',
-           'repr-const-nm': '.',
+LABELS = {'rand': 'Random', 'const': 'Foster', 'const-1': 'Foster-Markov',
+          'const-2': 'Foster 1-particle', 'const-3': 'Foster-mod', }
+MARKERS = {'rand': 'x',
+           'const': '.',
+           'const-1': 's',
+           'const-2': '|',
+           'const-3': 'o',
            }
 S = 3
 
@@ -104,16 +106,23 @@ def main(fnames, findices, plot, percentile):
                     total_rmse = torch.sqrt(rho_rmse ** 2 + alpha_rmse ** 2 + slope_rmse ** 2)
                     entropy = rho_dist.entropy() + alpha_dist.entropy() + slope_dist.entropy()
                     design = results["d_star_design"]
+                    y = results['y']
+                    parameters = torch.cat(
+                        [rho_concentration.squeeze(),
+                         alpha_concentration.squeeze(), slope_mu, slope_sigma],
+                        dim=-1
+                    )
                     try:
                         eig = -results['min loss']
                     except:
                         try:
                             eig = results['max EIG']
                         except:
-                            eig = torch.zeros(1)
+                            eig = torch.zeros(y.shape[0])
 
                     output = {"rho_rmse": rho_rmse, "alpha_rmse": alpha_rmse, "slope_rmse": slope_rmse,
-                              "Entropy": entropy, "total_rmse": total_rmse, 'Imax': eig, 'design': design}
+                              "Entropy": entropy, "total_rmse": total_rmse, 'Imax': eig, 'design': design,
+                              'y': y, 'param': parameters}
                     sname = fname.split("/")[-1].split(".")[0]
                     results_dict[sname].append(output)
             except EOFError:
@@ -132,14 +141,14 @@ def main(fnames, findices, plot, percentile):
             plt.figure(figsize=(5, 5))
             print(reformed[statistic].keys())
             for i, k in enumerate(reformed[statistic]):
-                e = reformed[statistic][k].squeeze()  # [1:]
+                e = reformed[statistic][k].squeeze()[:-1]
                 lower, centre, upper = upper_lower(e, percentile=percentile)
                 if statistic == "Entropy":
                     print(lower, centre, upper)
-                # centre = np.mean(e, axis=1)
-                # std = np.std(e, axis=1)
-                # upper = centre + std
-                # lower = centre - std
+                centre = np.mean(e, axis=1)
+                std = np.std(e, axis=1)
+                upper = centre + std
+                lower = centre - std
                 x = np.arange(1, e.shape[0] + 1)
                 plt.plot(x, centre, linestyle='-', markersize=12,
                          color=COLOURS[k], marker=MARKERS[k], label=LABELS[k],
@@ -154,8 +163,80 @@ def main(fnames, findices, plot, percentile):
 
             if statistic not in ["Entropy", "Imax"]:
                 plt.yscale('log')
-            plt.show()
+            # plt.show()
 
+        # fig = plt.figure(figsize=(8, 6))
+        # fig.clear()
+        # param_names = ['rho_0', 'rho_1', 'alpha_0', 'alpha_1', 'alpha_2',
+        #                'u_mu', 'u_sig']
+        # for i in range(len(param_names)):
+        #     ax = fig.add_subplot(3, 3, i+1)
+        #     for k, v in reformed['param'].items():
+        #         std = v[..., i].std(axis=1)
+        #         mean = v[..., i].mean(axis=1)
+        #         x = np.arange(1, std.shape[0] + 1)
+        #         ax.plot(x, std/mean, linestyle='-', markersize=12,
+        #                 color=COLOURS[k], marker=MARKERS[k], linewidth=1.5,
+        #                 label=LABELS[k] if i ==0 else "")
+        #     ax.set_xlabel("Step")
+        #     ax.set_ylabel(param_names[i])
+        #
+        # fig.legend()
+        # fig.show()
+
+        fig = plt.figure(figsize=(24, 16))
+        fig.clear()
+        dist_dict = {"rho_dist": torch.distributions.Beta,
+                 "alpha_dist": torch.distributions.Dirichlet,
+                 "u_dist": torch.distributions.LogNormal}
+        param_names = ['rho', 'alpha_0', 'alpha_1', 'alpha_2',
+                       'u']
+        param_truths = [0.9, 0.2, 0.3, 0.5, 10]
+
+        axs = [fig.add_subplot(2, 3, i + 1) for i in range(len(param_names))]
+        for k, v in reformed['param'].items():
+            tv = torch.tensor(v)
+            rho_dist = dist_dict["rho_dist"](tv[..., 0], tv[..., 1])
+            alpha_dist = dist_dict["alpha_dist"](tv[..., 2:5])
+            u_dist = dist_dict["u_dist"](tv[..., 5], tv[..., 6])
+            dist_means = torch.cat(
+                [
+                    rho_dist.mean.unsqueeze(-1), alpha_dist.mean,
+                    u_dist.mean.unsqueeze(-1)
+                ],
+                dim=-1
+            )
+            dist_stds = torch.cat(
+                [
+                    rho_dist.stddev.unsqueeze(-1), alpha_dist.stddev,
+                    u_dist.stddev.unsqueeze(-1)
+                ],
+                dim=-1
+            )
+            dist_mean_mean = dist_means.mean(axis=1)
+            dist_mean_stds = dist_means.std(axis=1)
+            dist_std_mean = dist_stds.mean(axis=1)
+            dist_std_stds = dist_stds.std(axis=1)
+            x = np.arange(1, dist_means.shape[0] + 1)
+            for i in range(len(param_names)):
+                axs[i].plot(x, dist_mean_mean[:, i], linestyle='-',
+                            markersize=12, color=COLOURS[k],
+                            marker=MARKERS[k], linewidth=1.5,
+                            label=LABELS[k] if i == 0 else "")
+                upper = dist_mean_mean[:, i] + dist_mean_stds[:, i]
+                lower = dist_mean_mean[:, i] - dist_mean_stds[:, i]
+                axs[i].fill_between(x, upper, lower, color=COLOURS[k],
+                                    alpha=0.25)
+                i += 1
+        for i in range(len(param_names)):
+            axs[i].set_xlabel("Step")
+            axs[i].set_ylabel(param_names[i])
+            axs[i].axhline(param_truths[i], linestyle='--', color="black",
+                           linewidth=1, label="Ground Truth" if i == 0 else "")
+
+        fig.legend()
+        fig.suptitle("Means")
+        fig.show()
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Sigmoid iterated experiment design results parser")

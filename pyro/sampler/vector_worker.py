@@ -32,7 +32,7 @@ class VectorWorker(DefaultWorker):
         self.agent.reset()
 
     def step_rollout(self, deterministic):
-        """Take a vector of single time-steps in the current rollout
+        """Take a vector of time-steps in the current rollout
 
         Returns:
             bool: True iff the path is done, either due to the environment
@@ -56,7 +56,8 @@ class VectorWorker(DefaultWorker):
             if not d.all():
                 self._prev_obs = next_o
                 return False
-        self._lengths.append(self._path_length * np.ones(self._n_parallel,))
+        self._lengths = self._path_length * np.ones(self._n_parallel,
+                                                    dtype=np.int)
         self._last_observations.append(self._prev_obs)
         return True
 
@@ -68,36 +69,33 @@ class VectorWorker(DefaultWorker):
             garage.TrajectoryBatch: A batch of the trajectories completed since
                 the last call to collect_rollout().
         """
-        observations = self._observations
+        observations = np.concatenate(np.stack(self._observations, axis=1))
         self._observations = []
-        last_observations = self._last_observations
+        last_observations = np.concatenate(self._last_observations)
         self._last_observations = []
-        actions = self._actions
+        actions = np.concatenate(np.stack(self._actions, axis=1))
         self._actions = []
-        rewards = self._rewards
+        rewards = np.concatenate(np.stack(self._rewards, axis=1))
         self._rewards = []
-        terminals = self._terminals
+        terminals = np.concatenate(np.stack(self._terminals, axis=1))
         self._terminals = []
         env_infos = self._env_infos
         self._env_infos = defaultdict(list)
         agent_infos = self._agent_infos
         self._agent_infos = defaultdict(list)
         for k, v in agent_infos.items():
-            agent_infos[k] = np.concatenate(v)
-        zs = np.zeros((self._n_parallel,))
+            agent_infos[k] = np.concatenate(np.stack(v, axis=1))
+        zs = np.zeros((self._n_parallel, self._lengths[0]))
         for k, v in env_infos.items():
-            env_infos[k] = np.stack(v, axis=-1) + zs
+            env_infos[k] = np.concatenate(np.stack(v, axis=-1) + zs)
         lengths = self._lengths
         self._lengths = []
-        return TrajectoryBatch(self.env.spec, np.concatenate(observations),
-                               np.concatenate(last_observations),
-                               np.concatenate(actions), np.concatenate(rewards),
-                               np.concatenate(terminals), dict(env_infos),
-                               dict(agent_infos),
-                               np.concatenate(lengths).astype('i'))
+        return TrajectoryBatch(self.env.spec, observations, last_observations,
+                               actions, rewards, terminals, dict(env_infos),
+                               dict(agent_infos), lengths)
 
     def rollout(self, deterministic=False):
-        """Sample a single rollout of the agent in the environment.
+        """Sample a single vectorised rollout of the agent in the environment.
 
         Returns:
             garage.TrajectoryBatch: The collected trajectory.
