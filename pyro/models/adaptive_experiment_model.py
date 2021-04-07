@@ -54,7 +54,7 @@ class CESModel(ExperimentModel):
                  init_alpha_guide=None, init_mu_guide=None, init_sig_guide=None,
                  init_ys=None, init_ds=None, n_parallel=1, obs_sd=0.005,
                  obs_label="y", n_elbo_samples=100, n_elbo_steps=100,
-                 elbo_lr=0.04, markovian=False):
+                 elbo_lr=0.04):
         super().__init__()
         self.init_rho_model = init_rho_model if init_rho_model is not None \
             else torch.ones(n_parallel, 1, 2)
@@ -88,7 +88,6 @@ class CESModel(ExperimentModel):
         self.init_ds = init_ds if init_ds is not None else torch.tensor([])
         self.ys = self.init_ys.detach().clone()
         self.ds = self.init_ds.detach().clone()
-        self.markovian = markovian
         self.param_names = [
             "rho_con",
             "alpha_con",
@@ -197,39 +196,16 @@ class CESModel(ExperimentModel):
             pyro.sample("u", dist.LogNormal(u_mu.expand(batch_shape),
                                             u_sig.expand(batch_shape)))
 
-    def run_experiment(self, design, y=None):
+    def run_experiment(self, design):
         """
-        Execute an experiment with given design. if `y` is `None` then fill in
-        a value predicted by the model.
+        Execute an experiment with given design.
         """
         # create model from up-to-date params
         cur_model = self.make_model()
 
         # infer experimental outcome given design and model
-        if y is None:
-            y = cur_model(design)
+        y = cur_model(design)
         y = y.detach().clone()
-        self.ys = torch.cat([self.ys, y], dim=-1)
-        self.ds = torch.cat([self.ds, design], dim=-2)
-
-        # learn the posterior given design and outcome
-        # pyro.set_rng_seed(10)
-        elbo_learn(
-            cur_model, self.ds, [self.obs_label], ["rho", "alpha", "u"],
-            self.n_elbo_samples, self.n_elbo_steps, self.guide,
-            {self.obs_label: self.ys}, optim.Adam({"lr": self.elbo_lr})
-        )
-
-        # update parameters
-        if self.markovian:
-            self.rho_con_model = pyro.param("rho_con").detach().clone()
-            self.alpha_con_model = pyro.param("alpha_con").detach().clone()
-            self.u_mu_model = pyro.param("u_mu").detach().clone()
-            self.u_sig_model = pyro.param("u_sig").detach().clone()
-        self.rho_con_guide = pyro.param("rho_con").detach().clone()
-        self.alpha_con_guide = pyro.param("alpha_con").detach().clone()
-        self.u_mu_guide = pyro.param("u_mu").detach().clone()
-        self.u_sig_guide = pyro.param("u_sig").detach().clone()
         return y
 
     def get_params(self):
