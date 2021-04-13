@@ -2,25 +2,25 @@ import argparse
 import torch
 import pyro
 import numpy as np
-from dowel import logger
 
+from dowel import logger
 from garage import wrap_experiment
+from garage.envs import normalize
 from garage.experiment import deterministic, LocalRunner
-from garage.replay_buffer import PathBuffer
-from garage.envs import GarageEnv, normalize
-from garage.torch import set_gpu_mode
-from garage.torch.algos import SAC
 from garage.sampler import LocalSampler
+from garage.torch import set_gpu_mode
 from gym import spaces
+from pyro.algos import SAC
 from pyro.contrib.util import lexpand
-from pyro.envs.adaptive_design_env import AdaptiveDesignEnv
+from pyro.envs import AdaptiveDesignEnv, GarageEnv
 from pyro.models.adaptive_experiment_model import CESModel
 from pyro.policies.adaptive_tanh_gaussian_policy import \
     AdaptiveTanhGaussianPolicy
 from pyro.q_functions.adaptive_mlp_q_function import AdaptiveMLPQFunction
+from pyro.replay_buffer import ListBuffer
 from pyro.sampler.vector_worker import VectorWorker
+from pyro.spaces.batch_box import BatchBox
 from torch import nn
-from torch.nn import functional as F
 
 seeds = [126127, 911353, 783935, 631280, 100573, 677846, 692965, 516184, 165479,
          643024]
@@ -37,19 +37,23 @@ def sac_ces(ctxt=None, n_parallel=1, budget=1, seq_length=1, n_rl_itr=1,
     ys = []
     layer_size = 128
     design_space = spaces.Box(low=0.01, high=100, shape=(1, 1, 1, 6))
-    obs_space = spaces.Box(low=-np.inf, high=np.inf, shape=(1, 7))
+    obs_space = BatchBox(low=np.array([-1.] * 6 + [0.]), high=np.ones((7,)))
     recorded_data = False
     reset_policy = True
 
     model = CESModel(n_parallel=n_parallel, n_elbo_steps=1000,
                      n_elbo_samples=10)
-    env = GarageEnv(
-        normalize(
-            AdaptiveDesignEnv(design_space, obs_space, model, budget,
-                              n_cont_samples),
-            normalize_obs=False
+
+    def make_env(design_space, obs_space, model, budget, n_cont_samples,
+                 true_model=None):
+        env = GarageEnv(
+            normalize(
+                AdaptiveDesignEnv(design_space, obs_space, model, budget,
+                                  n_cont_samples, true_model=true_model),
+                normalize_obs=False
+            )
         )
-    )
+        return env
 
     def make_policy():
         return AdaptiveTanhGaussianPolicy(
@@ -60,7 +64,7 @@ def sac_ces(ctxt=None, n_parallel=1, budget=1, seq_length=1, n_rl_itr=1,
             emitter_sizes=[layer_size, layer_size],
             emitter_nonlinearity=nn.ReLU,
             emitter_output_nonlinearity=None,
-            encoding_dim=layer_size//2,
+            encoding_dim=layer_size // 2,
             init_std=np.sqrt(1 / 3),
             min_std=np.exp(-20.),
             max_std=np.exp(0.),
@@ -75,9 +79,10 @@ def sac_ces(ctxt=None, n_parallel=1, budget=1, seq_length=1, n_rl_itr=1,
             emitter_sizes=[layer_size, layer_size],
             emitter_nonlinearity=nn.ReLU,
             emitter_output_nonlinearity=None,
-            encoding_dim=layer_size//2
+            encoding_dim=layer_size // 2
         )
 
+    env = make_env(design_space, obs_space, model, budget, n_cont_samples)
     policy = make_policy()
     qf1 = make_q_func()
     qf2 = make_q_func()
@@ -99,15 +104,9 @@ def sac_ces(ctxt=None, n_parallel=1, budget=1, seq_length=1, n_rl_itr=1,
                 "u": torch.tensor(10.)
             },
         )
-        eval_env = GarageEnv(
-            normalize(
-                AdaptiveDesignEnv(design_space, obs_space, model, budget,
-                                  true_model, n_cont_samples),
-                normalize_obs=False
-            )
-        )
-
-        replay_buffer = PathBuffer(capacity_in_transitions=int(1e6))
+        eval_env = make_env(design_space, obs_space, model, budget,
+                            n_cont_samples, true_model=true_model)
+        replay_buffer = ListBuffer(capacity_in_transitions=int(1e6))
 
         sac = SAC(env_spec=env.spec,
                   policy=policy,
@@ -187,13 +186,7 @@ def sac_ces(ctxt=None, n_parallel=1, budget=1, seq_length=1, n_rl_itr=1,
                          n_elbo_samples=10)
         env.close()
         eval_env.close()
-        env = GarageEnv(
-            normalize(
-                AdaptiveDesignEnv(design_space, obs_space, model, budget,
-                                  n_cont_samples),
-                normalize_obs=False
-            )
-        )
+        env = make_env(design_space, obs_space, model, budget, n_cont_samples)
         if reset_policy:
             policy = make_policy()
             qf1 = make_q_func()

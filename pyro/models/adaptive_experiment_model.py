@@ -231,12 +231,13 @@ class CESModel(ExperimentModel):
         cond_dict.update({"y": lexpand(y, size)})
         cond_model = pyro.condition(self.make_model(), data=cond_dict)
         trace = poutine.trace(cond_model).get_trace(lexpand(design, size))
+        trace.compute_log_prob()
         likelihoods = trace.nodes["y"]["log_prob"]
         return likelihoods
 
     def sample_theta(self, num_theta):
-        dummy_design = torch.zeros((num_theta, self.n_parallel, 1, 6))
+        dummy_design = torch.zeros((num_theta, self.n_parallel, 1, 1, 6))
         cur_model = self.make_model()
         trace = poutine.trace(cur_model).get_trace(dummy_design)
-        thetas = dict([(l, trace.nodes[l]["log_prob"]) for l in self.var_names])
+        thetas = dict([(l, trace.nodes[l]["value"]) for l in self.var_names])
         return thetas

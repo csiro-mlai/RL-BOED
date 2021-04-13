@@ -12,6 +12,8 @@ class AdaptiveMLPQFunction(nn.Module):
 
     It predicts the Q-value for all actions based on the history of experiments.
     It uses a PyTorch neural network module to fit the function of Q(s, a).
+    Inputs to the encoder should be of the shape
+    (batch_dim, history_length, obs_dim)
 
     Args:
             env_spec (garage.envs.env_spec.EnvSpec): Environment specification.
@@ -68,6 +70,6 @@ class AdaptiveMLPQFunction(nn.Module):
 
     def forward(self, observations, actions):
         """Return Q-value(s)."""
-        encoding = self._encoder().forward(observations)
-        pooled_encoding = encoding.sum(dim=0)
+        encoding = self._encoder.forward(observations)
+        pooled_encoding = encoding.sum(dim=-2)
         return self._emitter.forward(torch.cat([pooled_encoding, actions], 1))

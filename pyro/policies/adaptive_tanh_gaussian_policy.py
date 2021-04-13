@@ -11,7 +11,8 @@ class AdaptiveTanhGaussianPolicy(StochasticPolicy):
     """Multiheaded MLP with an encoder and pooling operation.
 
     A policy that takes as input entire histories and maps them to a Gaussian
-    distribution with a tanh transformation.
+    distribution with a tanh transformation. Inputs to the network should be of
+    the shape (batch_dim, history_length, obs_dim)
 
     Args:
         env_spec (garage.envs.env_spec.EnvSpec): Environment specification.
@@ -123,7 +124,7 @@ class AdaptiveTanhGaussianPolicy(StochasticPolicy):
 
         """
         encoding = self._encoder(observations)
-        pooled_encoding = encoding.sum(dim=0)
+        pooled_encoding = encoding.sum(dim=-2)
         dist = self._emitter(pooled_encoding)
         ret_mean = dist.mean.cpu()
         ret_log_std = (dist.variance.sqrt()).log().cpu()
