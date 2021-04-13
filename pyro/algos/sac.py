@@ -13,7 +13,7 @@ from garage.np import obtain_evaluation_samples
 from garage.np.algos import RLAlgorithm
 from garage.sampler import OffPolicyVectorizedSampler
 from garage.torch import dict_np_to_torch, global_device
-from garage.torch.policies import ReproducingPolicy
+from pyro.policies import ReproducingPolicy
 
 
 class SAC(RLAlgorithm):
