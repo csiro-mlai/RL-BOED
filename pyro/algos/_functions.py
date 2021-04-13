@@ -2,8 +2,7 @@
 import numpy as np
 
 from garage._dtypes import TrajectoryBatch
-from garage.misc import tensor_utils
-from garage.sampler.utils import rollout
+from pyro.sampler.utils import rollout
 
 
 def obtain_evaluation_samples(policy, env, max_path_length=1000,
