@@ -68,7 +68,7 @@ class AdaptiveDesignEnv(Env):
         log_prob0 = log_probs[0]
         self.log_products += log_probs
         logsumprod = torch.logsumexp(self.log_products, dim=0)
-        reward = log_prob0 + self.last_logsumprod + logsumprod
+        reward = log_prob0 + self.last_logsumprod - logsumprod
         self.last_logsumprod = logsumprod
         return reward
 
