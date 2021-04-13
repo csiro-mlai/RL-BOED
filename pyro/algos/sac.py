@@ -9,10 +9,10 @@ import torch.nn.functional as F
 import time
 from garage import log_performance
 from garage.misc import tensor_utils
-from garage.np import obtain_evaluation_samples
 from garage.np.algos import RLAlgorithm
 from garage.sampler import OffPolicyVectorizedSampler
 from garage.torch import dict_np_to_torch, global_device
+from pyro.algos._functions import obtain_evaluation_samples
 from pyro.policies import ReproducingPolicy
 
 
