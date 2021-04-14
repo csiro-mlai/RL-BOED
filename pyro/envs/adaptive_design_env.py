@@ -25,8 +25,8 @@ class AdaptiveDesignEnv(Env):
         self.n_parallel = model.n_parallel
         self.budget = budget
         self.l = l
-        self.log_products = torch.zeros((self.l+1, self.n_parallel))
-        self.last_logsumprod = torch.logsumexp(self.log_products, dim=0)
+        self.log_products = None
+        self.last_logsumprod = None
         self.history = []
         self.true_model = true_model
         if true_model is None:
@@ -37,13 +37,17 @@ class AdaptiveDesignEnv(Env):
         self.n_parallel = n_parallel
         self.model.reset(n_parallel)
         self.history = []
+        self.log_products = torch.zeros((self.l + 1, self.n_parallel))
+        self.last_logsumprod = torch.logsumexp(self.log_products, dim=0)
         self.thetas = self.model.sample_theta(self.l + 1)
         return self.get_obs()
 
     def step(self, action):
         design = torch.tensor(action)
         y = self.true_model(design)
-        y = self.model.run_experiment(design)
+        # index theta correctly because it is a dict
+        theta0 = {k: v[0] for k, v in self.thetas.items()}
+        y = self.model.run_experiment(design, theta0)
         self.history.append(
             torch.cat([design.squeeze(), y.squeeze(dim=-1)], dim=-1))
         obs = self.get_obs()

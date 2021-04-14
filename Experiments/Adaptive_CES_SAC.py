@@ -26,7 +26,7 @@ seeds = [126127, 911353, 783935, 631280, 100573, 677846, 692965, 516184, 165479,
          643024]
 
 
-@wrap_experiment(snapshot_mode='last')
+@wrap_experiment(snapshot_mode='none')
 def sac_ces(ctxt=None, n_parallel=1, budget=1, seq_length=1, n_rl_itr=1,
             n_cont_samples=10, seed=0):
     # one-time setup

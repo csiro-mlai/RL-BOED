@@ -196,15 +196,15 @@ class CESModel(ExperimentModel):
             pyro.sample("u", dist.LogNormal(u_mu.expand(batch_shape),
                                             u_sig.expand(batch_shape)))
 
-    def run_experiment(self, design):
+    def run_experiment(self, design, theta):
         """
         Execute an experiment with given design.
         """
-        # create model from up-to-date params
-        cur_model = self.make_model()
+        # create model from sampled params
+        cond_model = pyro.condition(self.make_model(), data=theta)
 
         # infer experimental outcome given design and model
-        y = cur_model(design)
+        y = cond_model(design)
         y = y.detach().clone()
         return y
 
