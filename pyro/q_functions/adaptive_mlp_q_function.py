@@ -68,8 +68,10 @@ class AdaptiveMLPQFunction(nn.Module):
             **kwargs
         )
 
-    def forward(self, observations, actions):
+    def forward(self, observations, actions, mask=None):
         """Return Q-value(s)."""
         encoding = self._encoder.forward(observations)
+        if mask is not None:
+            encoding = encoding * mask
         pooled_encoding = encoding.sum(dim=-2)
         return self._emitter.forward(torch.cat([pooled_encoding, actions], 1))

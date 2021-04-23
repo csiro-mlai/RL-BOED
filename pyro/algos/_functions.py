@@ -1,8 +1,8 @@
 """Utility functions for NumPy-based Reinforcement learning algorithms."""
 import numpy as np
 
-from garage._dtypes import TrajectoryBatch
 from pyro.sampler.utils import rollout
+from pyro._dtypes import TrajectoryBatch
 
 
 def obtain_evaluation_samples(policy, env, max_path_length=1000,
@@ -36,6 +36,8 @@ def obtain_evaluation_samples(policy, env, max_path_length=1000,
     return TrajectoryBatch(env_spec=env.spec,
                            observations=path["observations"],
                            last_observations=last_observations,
+                           masks=None,
+                           last_masks=None,
                            actions=path["actions"],
                            rewards=path["rewards"],
                            terminals=path["dones"],

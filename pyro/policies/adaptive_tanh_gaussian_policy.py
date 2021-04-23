@@ -1,10 +1,13 @@
 """AdaptiveTanhGaussianPolicy."""
+import akro
 import numpy as np
-from torch import nn
+import torch
 
+from garage.torch import global_device
 from garage.torch.distributions import TanhNormal
 from garage.torch.modules import GaussianMLPTwoHeadedModule, MLPModule
 from garage.torch.policies.stochastic_policy import StochasticPolicy
+from torch import nn
 
 
 class AdaptiveTanhGaussianPolicy(StochasticPolicy):
@@ -111,12 +114,61 @@ class AdaptiveTanhGaussianPolicy(StochasticPolicy):
             layer_normalization=layer_normalization,
             normal_distribution_cls=TanhNormal)
 
-    def forward(self, observations):
+    def get_actions(self, observations, mask=None):
+        r"""Get actions given observations.
+
+        Args:
+            observations (np.ndarray): Observations from the environment.
+                Shape is :math:`batch_dim \bullet env_spec.observation_space`.
+
+        Returns:
+            tuple:
+                * np.ndarray: Predicted actions.
+                    :math:`batch_dim \bullet env_spec.action_space`.
+                * dict:
+                    * np.ndarray[float]: Mean of the distribution.
+                    * np.ndarray[float]: Standard deviation of logarithmic
+                        values of the distribution.
+
+        """
+        if not isinstance(observations[0], np.ndarray) and not isinstance(
+                observations[0], torch.Tensor):
+            observations = self._env_spec.observation_space.flatten_n(
+                observations)
+
+        # frequently users like to pass lists of torch tensors or lists of
+        # numpy arrays. This handles those conversions.
+        if isinstance(observations, list):
+            if isinstance(observations[0], np.ndarray):
+                observations = np.stack(observations)
+            elif isinstance(observations[0], torch.Tensor):
+                observations = torch.stack(observations)
+
+        if isinstance(self._env_spec.observation_space, akro.Image) and \
+                len(observations.shape) < \
+                len(self._env_spec.observation_space.shape):
+            observations = self._env_spec.observation_space.unflatten_n(
+                observations)
+        with torch.no_grad():
+            if not isinstance(observations, torch.Tensor):
+                observations = torch.as_tensor(observations).float().to(
+                    global_device())
+                if mask is not None:
+                    mask = torch.as_tensor(mask).float().to(
+                        global_device())
+            dist, info = self.forward(observations, mask)
+            return dist.sample().cpu().numpy(), {
+                k: v.detach().cpu().numpy()
+                for (k, v) in info.items()
+            }
+
+    def forward(self, observations, mask=None):
         """Compute the action distributions from the observations.
 
         Args:
             observations (torch.Tensor): Batch of observations on default
                 torch device.
+            mask (torch.Tensor): a mask to account for 0-padded inputs
 
         Returns:
             torch.distributions.Distribution: Batch distribution of actions.
@@ -124,6 +176,8 @@ class AdaptiveTanhGaussianPolicy(StochasticPolicy):
 
         """
         encoding = self._encoder(observations)
+        if mask is not None:
+            encoding = encoding * mask
         pooled_encoding = encoding.sum(dim=-2)
         dist = self._emitter(pooled_encoding)
         ret_mean = dist.mean.cpu()

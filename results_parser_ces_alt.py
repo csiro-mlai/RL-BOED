@@ -15,7 +15,7 @@ output_dir = os.path.join(os.path.dirname(__file__), "run_outputs/ces/")
 cmap = plt.get_cmap("Paired")
 COLOURS = {'rand': cmap(1),
            'const': cmap(3),
-           'const-1': cmap(4),
+           'rl-1': cmap(4),
            'const-2': cmap(5),
            'const-3': cmap(6),
            }
@@ -28,11 +28,11 @@ VALUE_LABELS = {"Entropy": "Posterior entropy",
                 "slope_rmse": 'RMSE in $u$ estimate',
                 "total_rmse": 'Total RMSE',
                 "Imax": "EIG lower bound"}
-LABELS = {'rand': 'Random', 'const': 'Foster', 'const-1': 'Foster-Markov',
+LABELS = {'rand': 'Random', 'const': 'Foster', 'rl-1': 'RL-1step',
           'const-2': 'Foster 1-particle', 'const-3': 'Foster-mod', }
 MARKERS = {'rand': 'x',
            'const': '.',
-           'const-1': 's',
+           'rl-1': 's',
            'const-2': '|',
            'const-3': 'o',
            }
@@ -163,7 +163,7 @@ def main(fnames, findices, plot, percentile):
 
             if statistic not in ["Entropy", "Imax"]:
                 plt.yscale('log')
-            # plt.show()
+            plt.show()
 
         # fig = plt.figure(figsize=(8, 6))
         # fig.clear()

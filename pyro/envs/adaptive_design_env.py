@@ -34,8 +34,6 @@ class AdaptiveDesignEnv(Env):
         self.thetas = None
 
     def reset(self, n_parallel=1):
-        self.n_parallel = n_parallel
-        self.model.reset(n_parallel)
         self.history = []
         self.log_products = torch.zeros((self.l + 1, self.n_parallel))
         self.last_logsumprod = torch.logsumexp(self.log_products, dim=0)
@@ -66,6 +64,7 @@ class AdaptiveDesignEnv(Env):
 
     def terminal(self):
         return len(self.history) >= self.budget
+        # return False
 
     def get_reward(self, y, design):
         log_probs = self.model.get_likelihoods(y, design, self.thetas).squeeze()

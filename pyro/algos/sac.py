@@ -194,7 +194,7 @@ class SAC(RLAlgorithm):
                 runner.step_path = runner.obtain_samples(
                     runner.step_itr, batch_size)
                 t1 = time.time()
-                print(f"time = {t1-t0}s")
+                print(f"time = {t1 - t0}s")
                 path_returns = []
                 for path in runner.step_path:
                     self.replay_buffer.add_path(
@@ -202,7 +202,9 @@ class SAC(RLAlgorithm):
                              action=path['actions'],
                              reward=path['rewards'].reshape(-1, 1),
                              next_observation=path['next_observations'],
-                             terminal=path['dones'].reshape(-1, 1)))
+                             terminal=path['dones'].reshape(-1, 1),
+                             mask=path['masks'],
+                             next_mask=path['next_masks'], ))
                     path_returns.append(sum(path['rewards']))
                 assert len(path_returns) == len(runner.step_path)
                 allrets = np.array([
@@ -216,11 +218,11 @@ class SAC(RLAlgorithm):
                 )
                 allact = np.array([
                     sum(path["actions"]) for path in runner.step_path])
-                ys = self._eval_env.true_model(
-                    torch.tensor(
-                        (allact + 1) * 99.99 / 2 + .01).reshape(-1, 1, 1, 6)
-                )
-                unclipped = ((ys > 2 ** -22) * (ys < 1 - 2 ** -22)).sum()
+                # ys = self._eval_env.true_model(
+                #     torch.tensor(
+                #         (allact + 1) * 99.99 / 2 + .01).reshape(-1, 1, 1, 6)
+                # )
+                # unclipped = ((ys > 2 ** -22) * (ys < 1 - 2 ** -22)).sum()
                 self.episode_rewards.append(np.mean(path_returns))
                 t0 = time.time()
                 for _ in range(self._gradient_steps):
@@ -254,7 +256,7 @@ class SAC(RLAlgorithm):
             tabular.record("Policy/Mean", mean_mean)
             tabular.record("Action/MeanAction", allact.mean(axis=0))
             tabular.record("Action/StdAction", allact.std(axis=0))
-            tabular.record("Action/Unclipped", unclipped.item())
+            # tabular.record("Action/Unclipped", unclipped.item())
             runner.step_itr += 1
         return np.mean(last_return)
 
@@ -368,10 +370,11 @@ class SAC(RLAlgorithm):
 
         """
         obs = samples_data['observation']
+        mask = samples_data.get('mask')
         with torch.no_grad():
             alpha = self._get_log_alpha(samples_data).exp()
-        min_q_new_actions = torch.min(self._qf1(obs, new_actions),
-                                      self._qf2(obs, new_actions))
+        min_q_new_actions = torch.min(self._qf1(obs, new_actions, mask),
+                                      self._qf2(obs, new_actions, mask))
         policy_objective = ((alpha * log_pi_new_actions) -
                             min_q_new_actions.flatten()).mean()
         return policy_objective
@@ -403,25 +406,27 @@ class SAC(RLAlgorithm):
         rewards = samples_data['reward'].flatten()
         terminals = samples_data['terminal'].flatten()
         next_obs = samples_data['next_observation']
+        mask = samples_data.get('mask')
+        next_mask = samples_data.get('next_mask')
         with torch.no_grad():
             alpha = self._get_log_alpha(samples_data).exp()
 
-        q1_pred = self._qf1(obs, actions)
-        q2_pred = self._qf2(obs, actions)
+        q1_pred = self._qf1(obs, actions, mask)
+        q2_pred = self._qf2(obs, actions, mask)
 
-        new_next_actions_dist = self.policy(next_obs)[0]
+        new_next_actions_dist = self.policy(next_obs, next_mask)[0]
         new_next_actions_pre_tanh, new_next_actions = (
             new_next_actions_dist.rsample_with_pre_tanh_value())
         new_log_pi = new_next_actions_dist.log_prob(
             value=new_next_actions, pre_tanh_value=new_next_actions_pre_tanh)
 
         target_q_values = torch.min(
-            self._target_qf1(next_obs, new_next_actions),
-            self._target_qf2(
-                next_obs, new_next_actions)).flatten() - (alpha * new_log_pi)
+            self._target_qf1(next_obs, new_next_actions, next_mask),
+            self._target_qf2(next_obs, new_next_actions, next_mask)
+        ).flatten() - (alpha * new_log_pi)
         with torch.no_grad():
             q_target = rewards * self._reward_scale + (
-                1. - terminals) * self._discount * target_q_values
+                    1. - terminals) * self._discount * target_q_values
         qf1_loss = F.mse_loss(q1_pred.flatten(), q_target)
         qf2_loss = F.mse_loss(q2_pred.flatten(), q_target)
 
@@ -460,6 +465,7 @@ class SAC(RLAlgorithm):
 
         """
         obs = samples_data['observation']
+        mask = samples_data['mask']
         qf1_loss, qf2_loss = self._critic_objective(samples_data)
 
         self._qf1_optimizer.zero_grad()
@@ -470,7 +476,7 @@ class SAC(RLAlgorithm):
         qf2_loss.backward()
         self._qf2_optimizer.step()
 
-        action_dists = self.policy(obs)[0]
+        action_dists = self.policy(obs, mask)[0]
         new_actions_pre_tanh, new_actions = (
             action_dists.rsample_with_pre_tanh_value())
         log_pi_new_actions = action_dists.log_prob(

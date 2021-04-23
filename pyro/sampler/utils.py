@@ -77,6 +77,7 @@ def rollout(env,
             a = agent_info['mean']
         a_shape = (n_parallel,) + env.action_space.shape[1:]
         next_o, r, d, env_info = env.step(a.reshape(a_shape))
+        o = np.pad(o, ((0, 0), (0, max_path_length - path_length), (0, 0)))
         observations.append(o)
         rewards.append(r)
         actions.append(a)

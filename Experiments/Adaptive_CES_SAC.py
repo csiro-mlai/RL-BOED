@@ -5,19 +5,18 @@ import numpy as np
 
 from dowel import logger
 from garage import wrap_experiment
-from garage.envs import normalize
 from garage.experiment import deterministic, LocalRunner
-from garage.sampler import LocalSampler
 from garage.torch import set_gpu_mode
 from gym import spaces
 from pyro.algos import SAC
 from pyro.contrib.util import lexpand
-from pyro.envs import AdaptiveDesignEnv, GarageEnv
+from pyro.envs import AdaptiveDesignEnv, GarageEnv, normalize
 from pyro.models.adaptive_experiment_model import CESModel
 from pyro.policies.adaptive_tanh_gaussian_policy import \
     AdaptiveTanhGaussianPolicy
 from pyro.q_functions.adaptive_mlp_q_function import AdaptiveMLPQFunction
-from pyro.replay_buffer import ListBuffer
+from pyro.replay_buffer import PathBuffer
+from pyro.sampler.local_sampler import LocalSampler
 from pyro.sampler.vector_worker import VectorWorker
 from pyro.spaces.batch_box import BatchBox
 from torch import nn
@@ -26,7 +25,7 @@ seeds = [126127, 911353, 783935, 631280, 100573, 677846, 692965, 516184, 165479,
          643024]
 
 
-@wrap_experiment(snapshot_mode='none')
+@wrap_experiment(snapshot_mode='gap', snapshot_gap=100)
 def sac_ces(ctxt=None, n_parallel=1, budget=1, seq_length=1, n_rl_itr=1,
             n_cont_samples=10, seed=0):
     # one-time setup
@@ -37,7 +36,7 @@ def sac_ces(ctxt=None, n_parallel=1, budget=1, seq_length=1, n_rl_itr=1,
     ys = []
     layer_size = 128
     design_space = spaces.Box(low=0.01, high=100, shape=(1, 1, 1, 6))
-    obs_space = BatchBox(low=np.array([-1.] * 6 + [0.]), high=np.ones((7,)))
+    obs_space = BatchBox(low=np.zeros((7,)), high=np.array([100.] * 6 + [1.]))
     recorded_data = False
     reset_policy = True
 
@@ -50,7 +49,7 @@ def sac_ces(ctxt=None, n_parallel=1, budget=1, seq_length=1, n_rl_itr=1,
             normalize(
                 AdaptiveDesignEnv(design_space, obs_space, model, budget,
                                   n_cont_samples, true_model=true_model),
-                normalize_obs=False
+                normalize_obs=True
             )
         )
         return env
@@ -94,7 +93,7 @@ def sac_ces(ctxt=None, n_parallel=1, budget=1, seq_length=1, n_rl_itr=1,
     output_file = output_dir + "/posteriors.npz"
 
     # repeat for each experiment
-    for i in range(seq_length):
+    for i in range(budget, seq_length):
         runner = LocalRunner(snapshot_config=ctxt)
         true_model = pyro.condition(
             model.make_model(),
@@ -104,9 +103,9 @@ def sac_ces(ctxt=None, n_parallel=1, budget=1, seq_length=1, n_rl_itr=1,
                 "u": torch.tensor(10.)
             },
         )
-        eval_env = make_env(design_space, obs_space, model, budget,
+        eval_env = make_env(design_space, obs_space, model, i,
                             n_cont_samples, true_model=true_model)
-        replay_buffer = ListBuffer(capacity_in_transitions=int(1e6))
+        replay_buffer = PathBuffer(capacity_in_transitions=int(1e6))
 
         sac = SAC(env_spec=env.spec,
                   policy=policy,
@@ -115,7 +114,7 @@ def sac_ces(ctxt=None, n_parallel=1, budget=1, seq_length=1, n_rl_itr=1,
                   gradient_steps_per_itr=1000,
                   max_path_length=budget,
                   replay_buffer=replay_buffer,
-                  min_buffer_size=int(n_parallel),
+                  min_buffer_size=1e4,
                   target_update_tau=5e-3,
                   discount=1.0,
                   buffer_batch_size=256,
@@ -186,7 +185,7 @@ def sac_ces(ctxt=None, n_parallel=1, budget=1, seq_length=1, n_rl_itr=1,
                          n_elbo_samples=10)
         env.close()
         eval_env.close()
-        env = make_env(design_space, obs_space, model, budget, n_cont_samples)
+        env = make_env(design_space, obs_space, model, i, n_cont_samples)
         if reset_policy:
             policy = make_policy()
             qf1 = make_q_func()
