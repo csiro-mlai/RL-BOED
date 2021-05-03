@@ -20,12 +20,13 @@ class AdaptiveDesignEnv(Env):
         """
         self.action_space = design_space
         self.observation_space = history_space
+        self.obs_dims = history_space.low.ndim
         self.model = model
         self.n_parallel = model.n_parallel
         self.budget = budget
         self.l = l
-        self.log_products = torch.zeros((self.l+1, self.n_parallel))
-        self.last_logsumprod = torch.logsumexp(self.log_products, dim=0)
+        self.log_products = None
+        self.last_logsumprod = None
         self.history = []
         self.true_model = true_model
         if true_model is None:
@@ -36,33 +37,42 @@ class AdaptiveDesignEnv(Env):
         self.n_parallel = n_parallel
         self.model.reset(n_parallel)
         self.history = []
+        self.log_products = torch.zeros((self.l + 1, self.n_parallel))
+        self.last_logsumprod = torch.logsumexp(self.log_products, dim=0)
         self.thetas = self.model.sample_theta(self.l + 1)
         return self.get_obs()
 
     def step(self, action):
         design = torch.tensor(action)
         y = self.true_model(design)
-        y = self.model.run_experiment(design, y)
-        self.history.append(torch.cat([design.squeeze(), y], dim=-1))
+        # index theta correctly because it is a dict
+        theta0 = {k: v[0] for k, v in self.thetas.items()}
+        y = self.model.run_experiment(design, theta0)
+        self.history.append(
+            torch.cat([design.squeeze(), y.squeeze(dim=-1)], dim=-1))
         obs = self.get_obs()
         reward = self.get_reward(y, design)
         done = self.terminal()
         done = done * torch.ones_like(reward, dtype=torch.bool)
-        info = {'y': y}
+        info = {'y': y.squeeze()}
         return obs, reward, done, info
 
     def get_obs(self):
-        return np.stack(self.history)
+        if self.history:
+            return np.stack(self.history, axis=-1-self.obs_dims)
+        else:
+            return np.zeros(
+                (self.n_parallel, 0, self.observation_space.shape[-1]))
 
     def terminal(self):
         return len(self.history) >= self.budget
 
     def get_reward(self, y, design):
-        log_probs = self.model.get_likelihoods(y, design, self.thetas)
+        log_probs = self.model.get_likelihoods(y, design, self.thetas).squeeze()
         log_prob0 = log_probs[0]
         self.log_products += log_probs
         logsumprod = torch.logsumexp(self.log_products, dim=0)
-        reward = log_prob0 + self.last_logsumprod + logsumprod
+        reward = log_prob0 + self.last_logsumprod - logsumprod
         self.last_logsumprod = logsumprod
         return reward
 
