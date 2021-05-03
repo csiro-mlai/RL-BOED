@@ -2,6 +2,7 @@
 import collections
 
 import numpy as np
+import torch
 
 
 class PathBuffer:
@@ -131,7 +132,10 @@ class PathBuffer:
         """
         buf_arr = self._buffer.get(key, None)
         if buf_arr is None:
-            buf_arr = np.zeros((self._capacity,) + array.shape[1:], array.dtype)
+            buf_arr = torch.zeros(
+                (self._capacity,) + array.shape[1:],
+                dtype=array.dtype
+            )
             self._buffer[key] = buf_arr
         return buf_arr
 

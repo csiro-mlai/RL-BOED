@@ -4,13 +4,13 @@ import pyro
 import numpy as np
 
 from dowel import logger
-from garage import wrap_experiment
-from garage.experiment import deterministic, LocalRunner
+from garage.experiment import deterministic
 from garage.torch import set_gpu_mode
-from gym import spaces
+from pyro import wrap_experiment
 from pyro.algos import SAC
 from pyro.contrib.util import lexpand
 from pyro.envs import AdaptiveDesignEnv, GarageEnv, normalize
+from pyro.experiment import LocalRunner
 from pyro.models.adaptive_experiment_model import CESModel
 from pyro.policies.adaptive_tanh_gaussian_policy import \
     AdaptiveTanhGaussianPolicy
@@ -20,23 +20,37 @@ from pyro.sampler.local_sampler import LocalSampler
 from pyro.sampler.vector_worker import VectorWorker
 from pyro.spaces.batch_box import BatchBox
 from torch import nn
+import pydevd_pycharm
+
+# pydevd_pycharm.settrace('130.155.160.139', port=12345, stdoutToServer=True,
+#                         stderrToServer=True)
 
 seeds = [126127, 911353, 783935, 631280, 100573, 677846, 692965, 516184, 165479,
          643024]
 
 
-@wrap_experiment(snapshot_mode='gap', snapshot_gap=100)
+@wrap_experiment(snapshot_mode='gap', snapshot_gap=500)
 def sac_ces(ctxt=None, n_parallel=1, budget=1, seq_length=1, n_rl_itr=1,
             n_cont_samples=10, seed=0):
     # one-time setup
+    if torch.cuda.is_available():
+        set_gpu_mode(True)
+        torch.set_default_tensor_type('torch.cuda.FloatTensor')
+        print("\nGPU available\n")
+    else:
+        set_gpu_mode(False)
+        print("\nno GPU detected\n")
     deterministic.set_seed(seed)
     pyro.set_rng_seed(seed)
     denormalised_designs = []
     normalised_designs = []
     ys = []
     layer_size = 128
-    design_space = spaces.Box(low=0.01, high=100, shape=(1, 1, 1, 6))
-    obs_space = BatchBox(low=np.zeros((7,)), high=np.array([100.] * 6 + [1.]))
+    design_space = BatchBox(low=0.01, high=100, shape=(1, 1, 1, 6))
+    obs_space = BatchBox(
+        low=torch.zeros((7,)),
+        high=torch.as_tensor([100.] * 6 + [1.])
+    )
     recorded_data = False
     reset_policy = True
 
@@ -85,10 +99,7 @@ def sac_ces(ctxt=None, n_parallel=1, budget=1, seq_length=1, n_rl_itr=1,
     policy = make_policy()
     qf1 = make_q_func()
     qf2 = make_q_func()
-    if torch.cuda.is_available():
-        set_gpu_mode(True)
-    else:
-        set_gpu_mode(False)
+
     output_dir = "/".join(logger._outputs[1]._log_file.name.split("/")[:-1])
     output_file = output_dir + "/posteriors.npz"
 

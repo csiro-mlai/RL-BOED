@@ -430,3 +430,7 @@ def jit_compatible_arange(end, dtype=None, device=None):
 
 def torch_float(x):
     return x.float() if isinstance(x, torch.Tensor) else float(x)
+
+
+def clip(x, min, max):
+    return torch.maximum(torch.minimum(x, max), min)

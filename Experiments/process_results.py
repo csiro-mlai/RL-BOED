@@ -10,6 +10,9 @@ def main(fpaths, dest):
 	rmedians = []
 	rlqs = []
 	ruqs = []
+	emedians = []
+	elqs = []
+	euqs = []
 	rmeans = []
 	rstds = []
 	rmaxs = []
@@ -26,6 +29,9 @@ def main(fpaths, dest):
 			rmedian = []
 			rlq = []
 			ruq = []
+			emedian = []
+			elq = []
+			euq = []
 			rmean = []
 			rstd = []
 			rmax = []
@@ -46,6 +52,9 @@ def main(fpaths, dest):
 				if "Policy/MeanStd" in row: pstd.append(row["Policy/MeanStd"])
 				if "Evaluation/AverageReturn" in row: emean.append(row["Evaluation/AverageReturn"])
 				if "Evaluation/StdReturn" in row: estd.append(row["Evaluation/StdReturn"])
+				if "Evaluation/MedianReturn" in row: emedian.append(row["Evaluation/MedianReturn"])
+				if "Evaluation/LowerQuartileReturn" in row: elq.append(row["Evaluation/LowerQuartileReturn"])
+				if "Evaluation/UpperQuartileReturn" in row: euq.append(row["Evaluation/UpperQuartileReturn"])
 
 			ameans.append(amean)
 			astds.append(astd)
@@ -53,6 +62,9 @@ def main(fpaths, dest):
 			rlqs.append(rlq)
 			ruqs.append(ruq)
 			rmeans.append(rmean)
+			emedians.append(emedian)
+			elqs.append(elq)
+			euqs.append(euq)
 			rstds.append(rstd)
 			rmaxs.append(rmax)
 			rmins.append(rmin)
@@ -63,8 +75,8 @@ def main(fpaths, dest):
 	np.savez_compressed(
 		dest,
 		ameans=ameans, astds=astds, rmedians=rmedians, rlqs=rlqs, ruqs=ruqs,
-		rmeans=rmeans, rstds=rstds, rmaxs=rmaxs, rmins=rmins, pstds=pstds,
-		emeans=emeans, estds=estds
+		emedians=emedians, elqs=elqs, euqs=euqs, rmeans=rmeans, rstds=rstds,
+		rmaxs=rmaxs, rmins=rmins, pstds=pstds, emeans=emeans, estds=estds
 	)
 
 if __name__ == "__main__":

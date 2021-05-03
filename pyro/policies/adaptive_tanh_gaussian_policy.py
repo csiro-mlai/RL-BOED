@@ -157,8 +157,8 @@ class AdaptiveTanhGaussianPolicy(StochasticPolicy):
                     mask = torch.as_tensor(mask).float().to(
                         global_device())
             dist, info = self.forward(observations, mask)
-            return dist.sample().cpu().numpy(), {
-                k: v.detach().cpu().numpy()
+            return dist.sample().detach(), {
+                k: v.detach()
                 for (k, v) in info.items()
             }
 
@@ -180,6 +180,6 @@ class AdaptiveTanhGaussianPolicy(StochasticPolicy):
             encoding = encoding * mask
         pooled_encoding = encoding.sum(dim=-2)
         dist = self._emitter(pooled_encoding)
-        ret_mean = dist.mean.cpu()
-        ret_log_std = (dist.variance.sqrt()).log().cpu()
+        ret_mean = dist.mean.clone()
+        ret_log_std = (dist.variance.sqrt()).log().clone()
         return dist, dict(mean=ret_mean, log_std=ret_log_std)

@@ -1,27 +1,24 @@
 from abc import ABC
 
-from pyro.contrib.oed.eig import elbo_learn
-from pyro.util import is_bad
-from pyro import poutine
 from contextlib import ExitStack
+from pyro import poutine
 from pyro.contrib.util import iter_plates_to_shape, lexpand, rexpand, rmv
+from pyro.util import is_bad
 
 import torch
 import pyro
 import pyro.distributions as dist
-import torch.distributions as torch_dist
-import pyro.optim as optim
 
-epsilon = torch.tensor(2**-22)
+EPS = 2**-22
 
 
 class ExperimentModel(ABC):
     """
-    A model class for
+    Basic interface for probabilistic models
     """
 
     def __init__(self):
-        pass
+        self.epsilon = torch.tensor(EPS)
 
     def make_model(self):
         raise NotImplementedError
@@ -102,7 +99,7 @@ class CESModel(ExperimentModel):
                         1 + torch.norm(d1 - d2, dim=-1, p=2))
 
                 emission_dist = dist.CensoredSigmoidNormal(
-                    mean, sd, 1 - epsilon, epsilon
+                    mean, sd, 1 - self.epsilon, self.epsilon
                 ).to_event(1)
                 y = pyro.sample(self.obs_label, emission_dist)
                 return y

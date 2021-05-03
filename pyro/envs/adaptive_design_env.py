@@ -1,6 +1,4 @@
-import pyro
 import torch
-import numpy as np
 
 from gym import Env
 
@@ -41,8 +39,8 @@ class AdaptiveDesignEnv(Env):
         return self.get_obs()
 
     def step(self, action):
-        design = torch.tensor(action)
-        y = self.true_model(design)
+        design = torch.as_tensor(action)
+        # y = self.true_model(design)
         # index theta correctly because it is a dict
         theta0 = {k: v[0] for k, v in self.thetas.items()}
         y = self.model.run_experiment(design, theta0)
@@ -57,10 +55,11 @@ class AdaptiveDesignEnv(Env):
 
     def get_obs(self):
         if self.history:
-            return np.stack(self.history, axis=-1-self.obs_dims)
+            return torch.stack(self.history, dim=-1-self.obs_dims)
         else:
-            return np.zeros(
-                (self.n_parallel, 0, self.observation_space.shape[-1]))
+            return torch.zeros(
+                (self.n_parallel, 0, self.observation_space.shape[-1]),
+            )
 
     def terminal(self):
         return len(self.history) >= self.budget

@@ -2,18 +2,16 @@
 from collections import deque
 import copy
 
-from dowel import tabular
+from pyro.dowel import tabular
 import numpy as np
 import torch
 import torch.nn.functional as F
 import time
-from garage import log_performance
-from garage.misc import tensor_utils
 from garage.np.algos import RLAlgorithm
 from garage.sampler import OffPolicyVectorizedSampler
-from garage.torch import dict_np_to_torch, global_device
+from garage.torch import global_device
+from pyro import log_performance
 from pyro.algos._functions import obtain_evaluation_samples
-from pyro.policies import ReproducingPolicy
 
 
 class SAC(RLAlgorithm):
@@ -207,38 +205,32 @@ class SAC(RLAlgorithm):
                              next_mask=path['next_masks'], ))
                     path_returns.append(sum(path['rewards']))
                 assert len(path_returns) == len(runner.step_path)
-                allrets = np.array([
-                    sum(path["rewards"]) for path in runner.step_path])
-                mean_std = np.exp([
-                    p["agent_infos"]["log_std"] for p in runner.step_path
-                ]).mean(axis=(0, 1))
-                mean_mean = np.mean([
-                    p["agent_infos"]["mean"] for p in runner.step_path],
-                    axis=(0, 1)
-                )
-                allact = np.array([
-                    sum(path["actions"]) for path in runner.step_path])
+                allrets = torch.tensor(
+                    [path["rewards"].sum() for path in runner.step_path]
+                ).cpu().numpy()
+                mean_std = torch.stack(
+                    [p["agent_infos"]["log_std"] for p in runner.step_path]
+                ).exp().mean(dim=(0, 1)).cpu().numpy()
+                mean_mean = torch.stack(
+                        [p["agent_infos"]["mean"] for p in runner.step_path]
+                ).mean(dim=(0, 1)).cpu().numpy()
+                allact = torch.stack([
+                    sum(path["actions"]) for path in runner.step_path]
+                ).cpu().numpy()
                 # ys = self._eval_env.true_model(
                 #     torch.tensor(
                 #         (allact + 1) * 99.99 / 2 + .01).reshape(-1, 1, 1, 6)
                 # )
                 # unclipped = ((ys > 2 ** -22) * (ys < 1 - 2 ** -22)).sum()
-                self.episode_rewards.append(np.mean(path_returns))
+                self.episode_rewards.append(
+                    torch.stack(path_returns).mean().cpu().numpy())
                 t0 = time.time()
                 for _ in range(self._gradient_steps):
                     policy_loss, qf1_loss, qf2_loss = self.train_once()
                 t1 = time.time()
                 print(f"time = {t1 - t0}s")
             t0 = time.time()
-            # if runner.step_itr >= runner._train_args.n_epochs - 1:
-            repr_policy = ReproducingPolicy(
-                self.env_spec,
-                np.stack([path["actions"] for path in runner.step_path]),
-                tensor_utils.stack_tensor_dict_list(
-                    [p["agent_infos"] for p in runner.step_path]),
-            )
-            repr_policy = None
-            last_return = self._evaluate_policy(runner.step_itr, repr_policy)
+            last_return = self._evaluate_policy(runner.step_itr)
             t1 = time.time()
             print(f"time = {t1 - t0}s")
             self._log_statistics(policy_loss, qf1_loss, qf2_loss)
@@ -279,7 +271,6 @@ class SAC(RLAlgorithm):
         if self.replay_buffer.n_transitions_stored >= self._min_buffer_size:
             samples = self.replay_buffer.sample_transitions(
                 self._buffer_batch_size)
-            samples = dict_np_to_torch(samples)
             policy_loss, qf1_loss, qf2_loss = self.optimize_policy(samples)
             self._update_targets()
 

@@ -6,7 +6,7 @@ from collections import defaultdict
 from pyro import TrajectoryBatch
 from garage.sampler.default_worker import DefaultWorker
 
-import numpy as np
+import torch
 
 
 class VectorWorker(DefaultWorker):
@@ -31,9 +31,9 @@ class VectorWorker(DefaultWorker):
     def pad_observation(self, obs):
         pad_shape = list(obs.shape)
         pad_shape[1] = self._max_path_length - pad_shape[1]
-        pad = np.zeros(pad_shape)
-        padded_obs = np.concatenate([obs, pad], axis=1)
-        mask = np.concatenate([np.ones_like(obs), pad], axis=1)[..., :1]
+        pad = torch.zeros(pad_shape)
+        padded_obs = torch.cat([obs, pad], dim=1)
+        mask = torch.cat([torch.ones_like(obs), pad], dim=1)[..., :1]
         return padded_obs, mask
 
 
@@ -67,14 +67,14 @@ class VectorWorker(DefaultWorker):
                 self._env_infos[k].append(v)
             self._masks.append(self._prev_mask)
             self._path_length += 1
-            self._terminals.append(d)
+            self._terminals.append(d.float())
             if not d.all():
                 next_o, next_mask = self.pad_observation(next_o)
                 self._prev_obs = next_o
                 self._prev_mask = next_mask
                 return False
-        self._lengths = self._path_length * np.ones(self._n_parallel,
-                                                    dtype=np.int)
+        self._lengths = self._path_length * torch.ones(self._n_parallel,
+                                                       dtype=torch.int)
         self._last_observations.append(self._prev_obs)
         self._last_masks.append(self._prev_mask)
         return True
@@ -87,29 +87,56 @@ class VectorWorker(DefaultWorker):
             garage.TrajectoryBatch: A batch of the trajectories completed since
                 the last call to collect_rollout().
         """
-        observations = np.concatenate(np.stack(self._observations, axis=1))
+        observations = torch.cat(
+            torch.split(torch.stack(self._observations, dim=1), 1),
+            dim=1
+        ).squeeze(0)
         self._observations = []
-        last_observations = np.concatenate(self._last_observations)
+        last_observations = torch.cat(self._last_observations)
         self._last_observations = []
-        masks = np.concatenate(np.stack(self._masks, axis=1))
+        masks = torch.cat(
+            torch.split(torch.stack(self._masks, dim=1), 1),
+            dim=1
+        ).squeeze(0)
         self._masks = []
-        last_masks = np.concatenate(self._last_masks)
+        last_masks = torch.cat(self._last_masks)
         self._last_masks = []
-        actions = np.concatenate(np.stack(self._actions, axis=1))
+        actions = torch.cat(
+            torch.split(torch.stack(self._actions, dim=1), 1),
+            dim=1
+        ).squeeze(0)
         self._actions = []
-        rewards = np.concatenate(np.stack(self._rewards, axis=1))
+        rewards = torch.cat(
+            torch.split(torch.stack(self._rewards, dim=1), 1),
+            dim=1
+        ).squeeze(0)
         self._rewards = []
-        terminals = np.concatenate(np.stack(self._terminals, axis=1))
+        terminals = torch.cat(
+            torch.split(torch.stack(self._terminals, dim=1), 1),
+            dim=1
+        ).squeeze(0)
         self._terminals = []
         env_infos = self._env_infos
         self._env_infos = defaultdict(list)
         agent_infos = self._agent_infos
         self._agent_infos = defaultdict(list)
         for k, v in agent_infos.items():
-            agent_infos[k] = np.concatenate(np.stack(v, axis=1))
-        zs = np.zeros((self._n_parallel, self._lengths[0]))
+            agent_infos[k] = torch.cat(
+                torch.split(torch.stack(v, dim=1), 1),
+                dim=1
+            ).squeeze(0)
+        zs = torch.zeros((self._n_parallel, self._lengths[0]))
         for k, v in env_infos.items():
-            env_infos[k] = np.concatenate(np.stack(v, axis=-1) + zs)
+            if torch.is_tensor(v[0]):
+                env_infos[k] = torch.cat(
+                    torch.split(torch.stack(v, dim=1), 1),
+                    dim=1
+                ).squeeze(0)
+            else:
+                env_infos[k] = torch.cat(
+                    torch.split(torch.as_tensor(v).float() + zs, 1),
+                    dim=1
+                ).squeeze(0)
         lengths = self._lengths
         self._lengths = []
         return TrajectoryBatch(self.env.spec, observations, last_observations,

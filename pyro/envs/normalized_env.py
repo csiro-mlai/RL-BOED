@@ -2,7 +2,9 @@
 import gym
 import gym.spaces
 import gym.spaces.utils
-import numpy as np
+import torch
+
+from pyro.util import clip
 
 
 class NormalizedEnv(gym.Wrapper):
@@ -47,8 +49,8 @@ class NormalizedEnv(gym.Wrapper):
 
         self._obs_alpha = obs_alpha
         flat_obs_dim = gym.spaces.utils.flatdim(env.observation_space)
-        self._obs_mean = np.zeros(flat_obs_dim)
-        self._obs_var = np.ones(flat_obs_dim)
+        self._obs_mean = torch.zeros(flat_obs_dim)
+        self._obs_var = torch.ones(flat_obs_dim)
 
         self._reward_alpha = reward_alpha
         self._reward_mean = 0.
@@ -59,25 +61,25 @@ class NormalizedEnv(gym.Wrapper):
         self._obs_mean = (
             1 - self._obs_alpha) * self._obs_mean + self._obs_alpha * flat_obs
         self._obs_var = (
-            1 - self._obs_alpha) * self._obs_var + self._obs_alpha * np.square(
-                flat_obs - self._obs_mean)
+            1 - self._obs_alpha) * self._obs_var + self._obs_alpha * \
+            torch.square(flat_obs - self._obs_mean)
 
     def _update_reward_estimate(self, reward):
         self._reward_mean = (1 - self._reward_alpha) * \
             self._reward_mean + self._reward_alpha * reward
         self._reward_var = (
             1 - self._reward_alpha
-        ) * self._reward_var + self._reward_alpha * np.square(
+        ) * self._reward_var + self._reward_alpha * torch.square(
             reward - self._reward_mean)
 
     # def _apply_normalize_obs(self, obs):
     #     """Compute normalized observation.
     #
     #     Args:
-    #         obs (np.ndarray): Observation.
+    #         obs (torch.Tensor): Observation.
     #
     #     Returns:
-    #         np.ndarray: Normalized observation.
+    #         torch.Tensor: Normalized observation.
     #
     #     """
     #     self._update_obs_estimate(obs)
@@ -92,10 +94,10 @@ class NormalizedEnv(gym.Wrapper):
         """rescale observatios to range [0,1]
 
         Args:
-            obs (np.ndarray): Observation.
+            obs (torch.Tensor): Observation.
 
         Returns:
-            np.ndarray: Normalized observation.
+            torch.Tensor: Normalized observation.
         """
         lb, ub = self.observation_space.low, self.observation_space.high
         norm_obs = (obs - lb) / (ub-lb)
@@ -122,7 +124,7 @@ class NormalizedEnv(gym.Wrapper):
 
         Returns:
             tuple:
-                * observation (np.ndarray): The observation of the environment.
+                * observation (torch.Tensor): The observation of the environment.
                 * reward (float): The reward acquired at this time step.
                 * done (boolean): Whether the environment was completed at this
                     time step.
@@ -139,11 +141,11 @@ class NormalizedEnv(gym.Wrapper):
         """Feed environment with one step of action and get result.
 
         Args:
-            action (np.ndarray): An action fed to the environment.
+            action (torch.Tensor): An action fed to the environment.
 
         Returns:
             tuple:
-                * observation (np.ndarray): The observation of the environment.
+                * observation (torch.Tensor): The observation of the environment.
                 * reward (float): The reward acquired at this time step.
                 * done (boolean): Whether the environment was completed at this
                     time step.
@@ -153,10 +155,10 @@ class NormalizedEnv(gym.Wrapper):
         if isinstance(self.action_space, gym.spaces.Box):
             # rescale the action when the bounds are not inf
             lb, ub = self.action_space.low, self.action_space.high
-            if np.all(lb != -np.inf) and np.all(ub != -np.inf):
+            if torch.isfinite(lb).all() and torch.isfinite(ub).all():
                 scaled_action = lb + (action + self._expected_action_scale) * (
                     0.5 * (ub - lb) / self._expected_action_scale)
-                scaled_action = np.clip(scaled_action, lb, ub)
+                scaled_action = clip(scaled_action, lb, ub)
             else:
                 scaled_action = action
         else:

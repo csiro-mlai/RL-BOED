@@ -5,6 +5,9 @@ from pyro.primitives import (clear_param_store, enable_validation, factor, get_p
                              param, plate, plate_stack, random_module, sample, validation_enabled)
 from pyro.util import set_rng_seed
 from pyro._dtypes import TrajectoryBatch
+from pyro._functions import log_performance
+from pyro.experiment.experiment import wrap_experiment
+
 
 version_prefix = '0.4.1'
 
@@ -37,4 +40,6 @@ __all__ = [
     "set_rng_seed",
     "TrajectoryBatch",
     "validation_enabled",
+    "log_performance",
+    "wrap_experiment",
 ]

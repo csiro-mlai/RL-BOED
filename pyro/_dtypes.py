@@ -3,6 +3,7 @@ import collections
 
 import akro
 import numpy as np
+import torch
 
 from garage.misc import tensor_utils
 
@@ -48,32 +49,32 @@ class TrajectoryBatch(
     Attributes:
         env_spec (garage.envs.EnvSpec): Specification for the environment from
             which this data was sampled.
-        observations (numpy.ndarray): A numpy array of shape
+        observations (torch.Tensor): A torch tensor of shape
             :math:`(N \bullet [T], O^*)` containing the (possibly
             multi-dimensional) observations for all time steps in this batch.
             These must conform to :obj:`env_spec.observation_space`.
-        last_observations (numpy.ndarray): A numpy array of shape
+        last_observations (torch.Tensor): A torch tensor of shape
             :math:`(N, O^*)` containing the last observation of each
             trajectory.  This is necessary since there are one more
             observations than actions every trajectory.
-        actions (numpy.ndarray): A  numpy array of shape
+        actions (torch.Tensor): A  torch tensor of shape
             :math:`(N \bullet [T], A^*)` containing the (possibly
             multi-dimensional) actions for all time steps in this batch. These
             must conform to :obj:`env_spec.action_space`.
-        rewards (numpy.ndarray): A numpy array of shape
+        rewards (torch.Tensor): A torch tensor of shape
             :math:`(N \bullet [T])` containing the rewards for all time steps
             in this batch.
-        terminals (numpy.ndarray): A boolean numpy array of shape
+        terminals (torch.Tensor): A boolean torch tensor of shape
             :math:`(N \bullet [T])` containing the termination signals for all
             time steps in this batch.
-        env_infos (dict): A dict of numpy arrays arbitrary environment state
-            information. Each value of this dict should be a numpy array of
+        env_infos (dict): A dict of torch tensors arbitrary environment state
+            information. Each value of this dict should be a torch tensor of
             shape :math:`(N \bullet [T])` or :math:`(N \bullet [T], S^*)`.
-        agent_infos (numpy.ndarray): A dict of numpy arrays arbitrary agent
-            state information. Each value of this dict should be a numpy array
+        agent_infos (torch.Tensor): A dict of torch tensors arbitrary agent
+            state information. Each value of this dict should be a torch tensor
             of shape :math:`(N \bullet [T])` or :math:`(N \bullet [T], S^*)`.
             For example, this may contain the hidden states from an RNN policy.
-        lengths (numpy.ndarray): An integer numpy array of shape :math:`(N,)`
+        lengths (torch.Tensor): An integer torch tensor of shape :math:`(N,)`
             containing the length of each trajectory in this batch. This may be
             used to reconstruct the individual trajectories.
 
@@ -99,7 +100,7 @@ class TrajectoryBatch(
                 'Lengths tensor must be a tensor of shape (N,), but got a '
                 'tensor of shape {} instead'.format(lengths.shape))
 
-        if not (lengths.dtype.kind == 'u' or lengths.dtype.kind == 'i'):
+        if lengths.is_floating_point() or lengths.is_complex():
             raise ValueError(
                 'Lengths tensor must have an integer dtype, but got dtype {} '
                 'instead.'.format(lengths.dtype))
@@ -194,20 +195,20 @@ class TrajectoryBatch(
                 'terminals tensor must have shape {}, but got shape {} '
                 'instead.'.format(inferred_batch_size, terminals.shape))
 
-        if terminals.dtype != np.bool:
+        if terminals.dtype != torch.bool and terminals.dtype != torch.float:
             raise ValueError(
-                'terminals tensor must be dtype np.bool, but got tensor '
+                'terminals tensor must be dtype torch.bool, but got tensor '
                 'of dtype {} instead.'.format(terminals.dtype))
 
         # env_infos
         for key, val in env_infos.items():
-            if not isinstance(val, (dict, np.ndarray)):
+            if not isinstance(val, (dict, torch.Tensor)):
                 raise ValueError(
-                    'Each entry in env_infos must be a numpy array or '
+                    'Each entry in env_infos must be a torch tensor or '
                     'dictionary, but got key {} with value type {} instead.'.
                     format(key, type(val)))
 
-            if (isinstance(val, np.ndarray)
+            if (isinstance(val, torch.Tensor)
                     and val.shape[0] != inferred_batch_size):
                 raise ValueError(
                     'Each entry in env_infos must have a batch dimension of '
@@ -216,13 +217,13 @@ class TrajectoryBatch(
 
         # agent_infos
         for key, val in agent_infos.items():
-            if not isinstance(val, (dict, np.ndarray)):
+            if not isinstance(val, (dict, torch.Tensor)):
                 raise ValueError(
-                    'Each entry in agent_infos must be a numpy array or '
+                    'Each entry in agent_infos must be a torch tensor or '
                     'dictionary, but got key {} with value type {} instead.'
                     'instead'.format(key, type(val)))
 
-            if (isinstance(val, np.ndarray)
+            if (isinstance(val, torch.Tensor)
                     and val.shape[0] != inferred_batch_size):
                 raise ValueError(
                     'Each entry in agent_infos must have a batch dimension of '
@@ -252,23 +253,23 @@ class TrajectoryBatch(
                 assert (set(b.agent_infos.keys()) == set(
                     batches[0].agent_infos.keys()))
         env_infos = {
-            k: np.concatenate([b.env_infos[k] for b in batches])
+            k: torch.cat([b.env_infos[k] for b in batches])
             for k in batches[0].env_infos.keys()
         }
         agent_infos = {
-            k: np.concatenate([b.agent_infos[k] for b in batches])
+            k: torch.cat([b.agent_infos[k] for b in batches])
             for k in batches[0].agent_infos.keys()
         }
         return cls(
             batches[0].env_spec,
-            np.concatenate([batch.observations for batch in batches]),
-            np.concatenate([batch.last_observations for batch in batches]),
-            np.concatenate([batch.masks for batch in batches]),
-            np.concatenate([batch.last_masks for batch in batches]),
-            np.concatenate([batch.actions for batch in batches]),
-            np.concatenate([batch.rewards for batch in batches]),
-            np.concatenate([batch.terminals for batch in batches]), env_infos,
-            agent_infos, np.concatenate([batch.lengths for batch in batches]))
+            torch.cat([batch.observations for batch in batches]),
+            torch.cat([batch.last_observations for batch in batches]),
+            torch.cat([batch.masks for batch in batches]),
+            torch.cat([batch.last_masks for batch in batches]),
+            torch.cat([batch.actions for batch in batches]),
+            torch.cat([batch.rewards for batch in batches]),
+            torch.cat([batch.terminals for batch in batches]), env_infos,
+            agent_infos, torch.cat([batch.lengths for batch in batches]))
 
     def split(self):
         """Split a TrajectoryBatch into a list of TrajectoryBatches.
@@ -287,8 +288,7 @@ class TrajectoryBatch(
             traj = TrajectoryBatch(
                 env_spec=self.env_spec,
                 observations=self.observations[start:stop],
-                last_observations=np.asarray(
-                    [self.last_observations[i]]),
+                last_observations=self.last_observations[i].unsqueeze(0),
                 masks=self.masks[start:stop] if self.masks else None,
                 last_masks=self.last_masks[i] if self.last_masks else None,
                 actions=self.actions[start:stop],
@@ -298,7 +298,7 @@ class TrajectoryBatch(
                     self.env_infos, start, stop),
                 agent_infos=tensor_utils.slice_nested_dict(
                     self.agent_infos, start, stop),
-                lengths=np.asarray([length]))
+                lengths=torch.as_tensor([length]))
             trajectories.append(traj)
             start = stop
         return trajectories
@@ -307,24 +307,24 @@ class TrajectoryBatch(
         """Convert the batch into a list of dictionaries.
 
         Returns:
-            list[dict[str, np.ndarray or dict[str, np.ndarray]]]: Keys:
-                * observations (np.ndarray): Non-flattened array of
+            list[dict[str, torch.Tensor or dict[str, torch.Tensor]]]: Keys:
+                * observations (torch.Tensor): Non-flattened array of
                     observations. Has shape (T, S^*) (the unflattened state
                     space of the current environment).  observations[i] was
                     used by the agent to choose actions[i].
-                * next_observations (np.ndarray): Non-flattened array of
+                * next_observations (torch.Tensor): Non-flattened array of
                     observations. Has shape (T, S^*). next_observations[i] was
                     observed by the agent after taking actions[i].
-                * actions (np.ndarray): Non-flattened array of actions. Should
+                * actions (torch.Tensor): Non-flattened array of actions. Should
                     have shape (T, S^*) (the unflattened action space of the
                     current environment).
-                * rewards (np.ndarray): Array of rewards of shape (T,) (1D
+                * rewards (torch.Tensor): Array of rewards of shape (T,) (1D
                     array of length timesteps).
-                * dones (np.ndarray): Array of dones of shape (T,) (1D array
+                * dones (torch.Tensor): Array of dones of shape (T,) (1D array
                     of length timesteps).
-                * agent_infos (dict[str, np.ndarray]): Dictionary of stacked,
+                * agent_infos (dict[str, torch.Tensor]): Dictionary of stacked,
                     non-flattened `agent_info` arrays.
-                * env_infos (dict[str, np.ndarray]): Dictionary of stacked,
+                * env_infos (dict[str, torch.Tensor]): Dictionary of stacked,
                     non-flattened `env_info` arrays.
 
         """
@@ -336,13 +336,13 @@ class TrajectoryBatch(
                 'observations':
                 self.observations[start:stop],
                 'next_observations':
-                np.concatenate((self.observations[1 + start:stop],
-                                [self.last_observations[i]])),
+                torch.cat((self.observations[1 + start:stop],
+                           self.last_observations[i].unsqueeze(0))),
                 'masks':
                 self.masks[start:stop],
                 'next_masks':
-                np.concatenate((self.masks[1 + start:stop],
-                                [self.last_masks[i]])),
+                torch.cat((self.masks[1 + start:stop],
+                           self.last_masks[i].unsqueeze(0))),
                 'actions':
                 self.actions[start:stop],
                 'rewards':
@@ -366,13 +366,13 @@ class TrajectoryBatch(
         Args:
             env_spec (garage.envs.EnvSpec): Specification for the environment
                 from which this data was sampled.
-            paths (list[dict[str, np.ndarray or dict[str, np.ndarray]]]): Keys:
-                * observations (np.ndarray): Non-flattened array of
+            paths (list[dict[str, torch.Tensor or dict[str, torch.Tensor]]]): Keys:
+                * observations (torch.Tensor): Non-flattened array of
                     observations. Typically has shape (T, S^*) (the unflattened
                     state space of the current environment). observations[i]
                     was used by the agent to choose actions[i]. observations
                     may instead have shape (T + 1, S^*).
-                * next_observations (np.ndarray): Non-flattened array of
+                * next_observations (torch.Tensor): Non-flattened array of
                     observations. Has shape (T, S^*). next_observations[i] was
                     observed by the agent after taking actions[i]. Optional.
                     Note that to ensure all information from the environment
@@ -380,39 +380,39 @@ class TrajectoryBatch(
                     S^*), or this key should be set. However, this method is
                     lenient and will "duplicate" the last observation if the
                     original last observation has been lost.
-                * actions (np.ndarray): Non-flattened array of actions. Should
+                * actions (torch.Tensor): Non-flattened array of actions. Should
                     have shape (T, S^*) (the unflattened action space of the
                     current environment).
-                * rewards (np.ndarray): Array of rewards of shape (T,) (1D
+                * rewards (torch.Tensor): Array of rewards of shape (T,) (1D
                     array of length timesteps).
-                * dones (np.ndarray): Array of rewards of shape (T,) (1D array
+                * dones (torch.Tensor): Array of rewards of shape (T,) (1D array
                     of length timesteps).
-                * agent_infos (dict[str, np.ndarray]): Dictionary of stacked,
+                * agent_infos (dict[str, torch.Tensor]): Dictionary of stacked,
                     non-flattened `agent_info` arrays.
-                * env_infos (dict[str, np.ndarray]): Dictionary of stacked,
+                * env_infos (dict[str, torch.Tensor]): Dictionary of stacked,
                     non-flattened `env_info` arrays.
 
         """
-        lengths = np.asarray([len(p['rewards']) for p in paths])
+        lengths = torch.as_tensor([len(p['rewards']) for p in paths])
         if all(
                 len(path['observations']) == length + 1
                 for (path, length) in zip(paths, lengths)):
-            last_observations = np.asarray(
+            last_observations = torch.as_tensor(
                 [p['observations'][-1] for p in paths])
-            observations = np.concatenate(
+            observations = torch.cat(
                 [p['observations'][:-1] for p in paths])
-            last_masks = np.asarray(
+            last_masks = torch.as_tensor(
                 [p['masks'][-1] for p in paths])
-            masks = np.concatenate(
+            masks = torch.cat(
                 [p['masks'][:-1] for p in paths])
         else:
             # The number of observations and timesteps must match.
-            observations = np.concatenate([p['observations'] for p in paths])
+            observations = torch.cat([p['observations'] for p in paths])
             if paths[0].get('next_observations') is not None:
-                last_observations = np.asarray(
+                last_observations = torch.as_tensor(
                     [p['next_observations'][-1] for p in paths])
             else:
-                last_observations = np.asarray(
+                last_observations = torch.as_tensor(
                     [p['observations'][-1] for p in paths])
 
         stacked_paths = tensor_utils.concat_tensor_dict_list(paths)
@@ -449,18 +449,18 @@ class TimeStep(
     Attributes:
         env_spec (garage.envs.EnvSpec): Specification for the environment from
             which this data was sampled.
-        observation (numpy.ndarray): A numpy array of shape :math:`(O^*)`
+        observation (torch.Tensor): A torch tensor of shape :math:`(O^*)`
             containing the observation for the this time step in the
             environment. These must conform to
             :obj:`env_spec.observation_space`.
-        action (numpy.ndarray): A numpy array of shape :math:`(A^*)`
+        action (torch.Tensor): A torch tensor of shape :math:`(A^*)`
             containing the action for the this time step. These must conform
             to :obj:`env_spec.action_space`.
         reward (float): A float representing the reward for taking the action
             given the observation, at the this time step.
         terminals (bool): The termination signal for the this time step.
         env_info (dict): A dict arbitrary environment state information.
-        agent_info (numpy.ndarray): A dict of arbitrary agent
+        agent_info (torch.Tensor): A dict of arbitrary agent
             state information. For example, this may contain the hidden states
             from an RNN policy.
 
@@ -601,18 +601,18 @@ class TimeStepBatch(
     Attributes:
         env_spec (garage.envs.EnvSpec): Specification for the environment from
             which this data was sampled.
-        observations (numpy.ndarray): Non-flattened array of observations.
+        observations (torch.Tensor): Non-flattened array of observations.
             Typically has shape (batch_size, S^*) (the unflattened state space
             of the current environment).
-        actions (numpy.ndarray): Non-flattened array of actions. Should
+        actions (torch.Tensor): Non-flattened array of actions. Should
             have shape (batch_size, S^*) (the unflattened action space of the
             current environment).
-        rewards (numpy.ndarray): Array of rewards of shape (batch_size,) (1D
+        rewards (torch.Tensor): Array of rewards of shape (batch_size,) (1D
             array of length batch_size).
-        next_observation (numpy.ndarray): Non-flattened array of next
+        next_observation (torch.Tensor): Non-flattened array of next
             observations. Has shape (batch_size, S^*). next_observations[i] was
             observed by the agent after taking actions[i].
-        terminals (numpy.ndarray): A boolean numpy array of shape
+        terminals (torch.Tensor): A boolean torch tensor of shape
             shape (batch_size,) containing the termination signals for all
             transitions in this batch.
         env_infos (dict): A dict arbitrary environment state
@@ -719,20 +719,20 @@ class TimeStepBatch(
                                             rewards.shape[0]))
 
         # terminals
-        if terminals.dtype != np.bool:
+        if terminals.dtype != torch.bool:
             raise ValueError(
-                'terminals tensor must be dtype np.bool, but got tensor '
+                'terminals tensor must be dtype torch.bool, but got tensor '
                 'of dtype {} instead.'.format(terminals.dtype))
 
         # env_infos
         for key, val in env_infos.items():
-            if not isinstance(val, (dict, np.ndarray)):
+            if not isinstance(val, (dict, torch.Tensor)):
                 raise ValueError(
-                    'Each entry in env_infos must be a numpy array or '
+                    'Each entry in env_infos must be a torch tensor or '
                     'dictionary, but got key {} with value type {} '
                     'instead.'.format(key, type(val)))
 
-            if (isinstance(val, np.ndarray)
+            if (isinstance(val, torch.Tensor)
                     and val.shape[0] != inferred_batch_size):
                 raise ValueError(
                     'Each entry in env_infos must have a batch dimension '
@@ -742,13 +742,13 @@ class TimeStepBatch(
 
         # agent_infos
         for key, val in agent_infos.items():
-            if not isinstance(val, (dict, np.ndarray)):
+            if not isinstance(val, (dict, torch.Tensor)):
                 raise ValueError(
-                    'Each entry in agent_infos must be a numpy array or '
+                    'Each entry in agent_infos must be a torch tensor or '
                     'dictionary, but got key {} with value type {} instead.'
                     'instead'.format(key, type(val)))
 
-            if (isinstance(val, np.ndarray)
+            if (isinstance(val, torch.Tensor)
                     and val.shape[0] != inferred_batch_size):
                 raise ValueError(
                     'Each entry in agent_infos must have a batch '
@@ -779,20 +779,20 @@ class TimeStepBatch(
                              'concatenate')
 
         env_infos = {
-            k: np.concatenate([b.env_infos[k] for b in batches])
+            k: torch.cat([b.env_infos[k] for b in batches])
             for k in batches[0].env_infos.keys()
         }
         agent_infos = {
-            k: np.concatenate([b.agent_infos[k] for b in batches])
+            k: torch.cat([b.agent_infos[k] for b in batches])
             for k in batches[0].agent_infos.keys()
         }
         return cls(
             batches[0].env_spec,
-            np.concatenate([batch.observations for batch in batches]),
-            np.concatenate([batch.actions for batch in batches]),
-            np.concatenate([batch.rewards for batch in batches]),
-            np.concatenate([batch.next_observations for batch in batches]),
-            np.concatenate([batch.terminals for batch in batches]), env_infos,
+            torch.cat([batch.observations for batch in batches]),
+            torch.cat([batch.actions for batch in batches]),
+            torch.cat([batch.rewards for batch in batches]),
+            torch.cat([batch.next_observations for batch in batches]),
+            torch.cat([batch.terminals for batch in batches]), env_infos,
             agent_infos)
 
     def split(self):
@@ -810,17 +810,17 @@ class TimeStepBatch(
         for i in range(len(self.terminals)):
             time_step = TimeStepBatch(
                 env_spec=self.env_spec,
-                observations=np.asarray([self.observations[i]]),
-                actions=np.asarray([self.actions[i]]),
-                rewards=np.asarray([self.rewards[i]]),
-                next_observations=np.asarray([self.next_observations[i]]),
-                terminals=np.asarray([self.terminals[i]]),
+                observations=torch.as_tensor([self.observations[i]]),
+                actions=torch.as_tensor([self.actions[i]]),
+                rewards=torch.as_tensor([self.rewards[i]]),
+                next_observations=torch.as_tensor([self.next_observations[i]]),
+                terminals=torch.as_tensor([self.terminals[i]]),
                 env_infos={
-                    k: np.asarray([v[i]])
+                    k: torch.as_tensor([v[i]])
                     for (k, v) in self.env_infos.items()
                 },
                 agent_infos={
-                    k: np.asarray([v[i]])
+                    k: torch.as_tensor([v[i]])
                     for (k, v) in self.agent_infos.items()
                 },
             )
@@ -836,23 +836,23 @@ class TimeStepBatch(
 
 
         Returns:
-            list[dict[str, np.ndarray or dict[str, np.ndarray]]]: Keys:
-                observations (numpy.ndarray): Non-flattened array of
+            list[dict[str, torch.Tensor or dict[str, torch.Tensor]]]: Keys:
+                observations (torch.Tensor): Non-flattened array of
                     observations.
                     Typically has shape (batch_size, S^*) (the unflattened
                     state space
                     of the current environment).
-                actions (numpy.ndarray): Non-flattened array of actions. Should
+                actions (torch.Tensor): Non-flattened array of actions. Should
                     have shape (batch_size, S^*) (the unflattened action
                     space of the
                     current environment).
-                rewards (numpy.ndarray): Array of rewards of shape (
+                rewards (torch.Tensor): Array of rewards of shape (
                     batch_size,) (1D array of length batch_size).
-                next_observation (numpy.ndarray): Non-flattened array of next
+                next_observation (torch.Tensor): Non-flattened array of next
                     observations. Has shape (batch_size, S^*).
                     next_observations[i] was
                     observed by the agent after taking actions[i].
-                terminals (numpy.ndarray): A boolean numpy array of shape
+                terminals (torch.Tensor): A boolean torch tensor of shape
                     shape (batch_size,) containing the termination signals
                     for all
                     transitions in this batch.
@@ -867,20 +867,20 @@ class TimeStepBatch(
         for i in range(len(self.terminals)):
             samples.append({
                 'observations':
-                np.asarray([self.observations[i]]),
+                torch.as_tensor([self.observations[i]]),
                 'actions':
-                np.asarray([self.actions[i]]),
+                torch.as_tensor([self.actions[i]]),
                 'rewards':
-                np.asarray([self.rewards[i]]),
+                torch.as_tensor([self.rewards[i]]),
                 'next_observations':
-                np.asarray([self.next_observations[i]]),
+                torch.as_tensor([self.next_observations[i]]),
                 'terminals':
-                np.asarray([self.terminals[i]]),
+                torch.as_tensor([self.terminals[i]]),
                 'env_infos':
-                {k: np.asarray([v[i]])
+                {k: torch.as_tensor([v[i]])
                  for (k, v) in self.env_infos.items()},
                 'agent_infos':
-                {k: np.asarray([v[i]])
+                {k: torch.as_tensor([v[i]])
                  for (k, v) in self.agent_infos.items()},
             })
         return samples
@@ -892,22 +892,22 @@ class TimeStepBatch(
         Args:
             env_spec (garage.envs.EnvSpec): Specification for the environment
                 from which this data was sampled.
-            ts_samples (list[dict[str, np.ndarray or dict[str, np.ndarray]]]):
+            ts_samples (list[dict[str, torch.Tensor or dict[str, torch.Tensor]]]):
                 keys:
-                * observations (numpy.ndarray): Non-flattened array of
+                * observations (torch.Tensor): Non-flattened array of
                     observations.
                     Typically has shape (batch_size, S^*) (the unflattened
                     state space of the current environment).
-                * actions (numpy.ndarray): Non-flattened array of actions.
+                * actions (torch.Tensor): Non-flattened array of actions.
                     Should have shape (batch_size, S^*) (the unflattened action
                     space of the current environment).
-                * rewards (numpy.ndarray): Array of rewards of shape (
+                * rewards (torch.Tensor): Array of rewards of shape (
                     batch_size,) (1D array of length batch_size).
-                * next_observation (numpy.ndarray): Non-flattened array of next
+                * next_observation (torch.Tensor): Non-flattened array of next
                     observations. Has shape (batch_size, S^*).
                     next_observations[i] was observed by the agent after
                     taking actions[i].
-                * terminals (numpy.ndarray): A boolean numpy array of shape
+                * terminals (torch.Tensor): A boolean torch tensor of shape
                     shape (batch_size,) containing the termination signals
                     for all transitions in this batch.
                 * env_infos (dict): A dict arbitrary environment state

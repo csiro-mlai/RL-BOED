@@ -1,5 +1,6 @@
 """Utility functions for NumPy-based Reinforcement learning algorithms."""
 import numpy as np
+import torch
 
 from pyro.sampler.utils import rollout
 from pyro._dtypes import TrajectoryBatch
@@ -31,7 +32,7 @@ def obtain_evaluation_samples(policy, env, max_path_length=1000,
                    max_path_length=max_path_length,
                    deterministic=True,
                    n_parallel=n_parallel)
-    lengths = np.asarray([max_path_length] * n_parallel)
+    lengths = torch.full((n_parallel,), max_path_length)
     last_observations = path["observations"][max_path_length-1::max_path_length]
     return TrajectoryBatch(env_spec=env.spec,
                            observations=path["observations"],
