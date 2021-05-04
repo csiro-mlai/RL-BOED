@@ -214,8 +214,8 @@ class SAC(RLAlgorithm):
                 mean_mean = torch.stack(
                         [p["agent_infos"]["mean"] for p in runner.step_path]
                 ).mean(dim=(0, 1)).cpu().numpy()
-                allact = torch.stack([
-                    sum(path["actions"]) for path in runner.step_path]
+                allact = torch.cat(
+                    [path["actions"] for path in runner.step_path]
                 ).cpu().numpy()
                 # ys = self._eval_env.true_model(
                 #     torch.tensor(
