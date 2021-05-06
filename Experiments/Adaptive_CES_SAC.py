@@ -8,6 +8,7 @@ from garage.torch import set_gpu_mode
 from pyro import wrap_experiment
 from pyro.algos import SAC
 from pyro.envs import AdaptiveDesignEnv, GarageEnv, normalize
+from pyro.envs.adaptive_design_env import LOWER, UPPER
 from pyro.experiment import LocalRunner
 from pyro.models.adaptive_experiment_model import CESModel
 from pyro.policies.adaptive_tanh_gaussian_policy import \
@@ -28,7 +29,7 @@ seeds = [126127, 911353, 783935, 631280, 100573, 677846, 692965, 516184, 165479,
 
 
 def main(n_parallel=1, budget=1, n_rl_itr=1, n_cont_samples=10, seed=0,
-         log_dir=None, snapshot_mode='gap', snapshot_gap=500):
+         log_dir=None, snapshot_mode='gap', snapshot_gap=500, bound_type=LOWER):
     @wrap_experiment(log_dir=log_dir, snapshot_mode=snapshot_mode,
                      snapshot_gap=snapshot_gap)
     def sac_ces(ctxt=None, n_parallel=1, budget=1, n_rl_itr=1,
@@ -49,13 +50,13 @@ def main(n_parallel=1, budget=1, n_rl_itr=1, n_cont_samples=10, seed=0,
                              )
         model = CESModel(n_parallel=n_parallel, n_elbo_steps=1000,
                          n_elbo_samples=10)
-
         def make_env(design_space, obs_space, model, budget, n_cont_samples,
-                     true_model=None):
+                     bound_type, true_model=None):
             env = GarageEnv(
                 normalize(
                     AdaptiveDesignEnv(design_space, obs_space, model, budget,
-                                      n_cont_samples, true_model=true_model),
+                                      n_cont_samples, true_model=true_model,
+                                      bound_type=bound_type),
                     normalize_obs=True
                 )
             )
@@ -88,7 +89,8 @@ def main(n_parallel=1, budget=1, n_rl_itr=1, n_cont_samples=10, seed=0,
                 encoding_dim=layer_size // 2
             )
 
-        env = make_env(design_space, obs_space, model, budget, n_cont_samples)
+        env = make_env(design_space, obs_space, model, budget, n_cont_samples,
+                       bound_type)
         policy = make_policy()
         qf1 = make_q_func()
         qf2 = make_q_func()
@@ -103,7 +105,7 @@ def main(n_parallel=1, budget=1, n_rl_itr=1, n_cont_samples=10, seed=0,
             },
         )
         eval_env = make_env(design_space, obs_space, model, budget,
-                            n_cont_samples, true_model=true_model)
+                            n_cont_samples, bound_type, true_model=true_model)
         replay_buffer = PathBuffer(capacity_in_transitions=int(1e6))
 
         sac = SAC(env_spec=env.spec,
@@ -141,9 +143,12 @@ if __name__ == "__main__":
     parser.add_argument("--log-dir", default=None, type=str)
     parser.add_argument("--snapshot-mode", default="gap", type=str)
     parser.add_argument("--snapshot-gap", default=500, type=int)
+    parser.add_argument("--bound-type", default="lower", type=str.lower,
+                        choices=["lower", "upper"])
     args = parser.parse_args()
+    bound_type = LOWER if args.bound_type == "lower" else UPPER
     exp_id = args.id
     main(n_parallel=args.n_parallel, budget=args.budget, n_rl_itr=args.n_rl_itr,
          n_cont_samples=args.n_contr_samples, seed=seeds[exp_id - 1],
          log_dir=args.log_dir, snapshot_mode=args.snapshot_mode,
-         snapshot_gap=args.snapshot_gap)
+         snapshot_gap=args.snapshot_gap, bound_type=bound_type)

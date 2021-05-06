@@ -2,10 +2,13 @@ import torch
 
 from gym import Env
 
+LOWER = 0
+UPPER = 1
+
 
 class AdaptiveDesignEnv(Env):
     def __init__(self, design_space, history_space, model, budget, l,
-                 true_model=None):
+                 true_model=None, bound_type=LOWER):
         """
         A generic class for building a SED MDP
 
@@ -23,6 +26,7 @@ class AdaptiveDesignEnv(Env):
         self.n_parallel = model.n_parallel
         self.budget = budget
         self.l = l
+        self.bound_type = bound_type
         self.log_products = None
         self.last_logsumprod = None
         self.history = []
@@ -30,20 +34,24 @@ class AdaptiveDesignEnv(Env):
         if true_model is None:
             self.true_model = lambda d: None
         self.thetas = None
+        self.theta0 = None
 
     def reset(self, n_parallel=1):
         self.history = []
-        self.log_products = torch.zeros((self.l + 1, self.n_parallel))
+        self.log_products = torch.zeros((
+            self.l + 1 if self.bound_type == LOWER else self.l,
+            self.n_parallel
+        ))
         self.last_logsumprod = torch.logsumexp(self.log_products, dim=0)
         self.thetas = self.model.sample_theta(self.l + 1)
+        self.theta0 = {k: v[0] for k, v in self.thetas.items()}
         return self.get_obs()
 
     def step(self, action):
         design = torch.as_tensor(action)
         # y = self.true_model(design)
         # index theta correctly because it is a dict
-        theta0 = {k: v[0] for k, v in self.thetas.items()}
-        y = self.model.run_experiment(design, theta0)
+        y = self.model.run_experiment(design, self.theta0)
         self.history.append(
             torch.cat([design.squeeze(), y.squeeze(dim=-1)], dim=-1))
         obs = self.get_obs()
@@ -68,9 +76,16 @@ class AdaptiveDesignEnv(Env):
     def get_reward(self, y, design):
         log_probs = self.model.get_likelihoods(y, design, self.thetas).squeeze()
         log_prob0 = log_probs[0]
-        self.log_products += log_probs
-        logsumprod = torch.logsumexp(self.log_products, dim=0)
-        reward = log_prob0 + self.last_logsumprod - logsumprod
+        if self.bound_type == LOWER:
+            # maximise lower bound
+            self.log_products += log_probs
+            logsumprod = torch.logsumexp(self.log_products, dim=0)
+            reward = log_prob0 + self.last_logsumprod - logsumprod
+        else:
+            # minimise upper bound
+            self.log_products += log_probs[1:]
+            logsumprod = torch.logsumexp(self.log_products, dim=0)
+            reward = logsumprod - self.last_logsumprod - log_prob0
         self.last_logsumprod = logsumprod
         return reward
 
