@@ -1,7 +1,7 @@
 """Functions exposed directly in the garage namespace."""
 from collections import defaultdict
 
-from dowel import tabular
+from pyro.dowel import tabular
 import numpy as np
 import torch
 

@@ -180,7 +180,6 @@ class SAC(RLAlgorithm):
         if not self._eval_env:
             self._eval_env = runner.get_env_copy()
         last_return = None
-        idx = 0
         for _ in runner.step_epochs():
             for _ in range(self._steps_per_epoch):
                 if not (self.replay_buffer.n_transitions_stored >=
