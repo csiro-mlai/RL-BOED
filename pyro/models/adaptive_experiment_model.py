@@ -63,6 +63,23 @@ class CESModel(ExperimentModel):
         ]
         self.var_names = ["rho", "alpha", "u"]
 
+    def reset(self, init_rho_model=None, init_alpha_model=None,
+              init_mu_model=None, init_sig_model=None, n_parallel=None):
+        if n_parallel is not None:
+            self.n_parallel = n_parallel
+            self.init_rho_model = init_rho_model if init_rho_model \
+                else torch.ones(self.n_parallel, 1, 2)
+            self.init_alpha_model = init_alpha_model if init_alpha_model \
+                else torch.ones(self.n_parallel, 1, 3)
+            self.init_mu_model = init_mu_model if init_mu_model \
+                else torch.ones(self.n_parallel, 1)
+            self.init_sig_model = init_sig_model if init_sig_model \
+                else 3. * torch.ones(self.n_parallel, 1)
+            self.rho_con_model = self.init_rho_model.detach().clone()
+            self.alpha_con_model = self.init_alpha_model.detach().clone()
+            self.u_mu_model = self.init_mu_model.detach().clone()
+            self.u_sig_model = self.init_sig_model.detach().clone()
+
     def make_model(self):
         def model(design):
             # pyro.set_rng_seed(10)

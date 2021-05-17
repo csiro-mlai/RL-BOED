@@ -114,7 +114,7 @@ class NormalizedEnv(gym.Wrapper):
 
         """
         self._update_reward_estimate(reward)
-        return reward / (np.sqrt(self._reward_var) + 1e-8)
+        return reward / (torch.sqrt(self._reward_var) + 1e-8)
 
     def reset(self, **kwargs):
         """Reset environment.

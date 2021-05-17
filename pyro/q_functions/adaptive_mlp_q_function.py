@@ -74,4 +74,4 @@ class AdaptiveMLPQFunction(nn.Module):
         if mask is not None:
             encoding = encoding * mask
         pooled_encoding = encoding.sum(dim=-2)
-        return self._emitter.forward(torch.cat([pooled_encoding, actions], 1))
+        return self._emitter.forward(torch.cat([pooled_encoding, actions], -1))

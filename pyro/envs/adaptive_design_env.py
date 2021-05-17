@@ -4,6 +4,7 @@ from gym import Env
 
 LOWER = 0
 UPPER = 1
+CUMULATIVE = 2
 
 
 class AdaptiveDesignEnv(Env):
@@ -37,6 +38,8 @@ class AdaptiveDesignEnv(Env):
         self.theta0 = None
 
     def reset(self, n_parallel=1):
+        self.model.reset(n_parallel=n_parallel)
+        self.n_parallel = n_parallel
         self.history = []
         self.log_products = torch.zeros((
             self.l + 1 if self.bound_type == LOWER else self.l,
@@ -44,16 +47,20 @@ class AdaptiveDesignEnv(Env):
         ))
         self.last_logsumprod = torch.logsumexp(self.log_products, dim=0)
         self.thetas = self.model.sample_theta(self.l + 1)
+        # index theta correctly because it is a dict
         self.theta0 = {k: v[0] for k, v in self.thetas.items()}
         return self.get_obs()
 
     def step(self, action):
         design = torch.as_tensor(action)
         # y = self.true_model(design)
-        # index theta correctly because it is a dict
         y = self.model.run_experiment(design, self.theta0)
         self.history.append(
-            torch.cat([design.squeeze(), y.squeeze(dim=-1)], dim=-1))
+            torch.cat(
+                [design.squeeze(dim=-2).squeeze(dim=-2), y.squeeze(dim=-1)],
+                dim=-1
+            )
+        )
         obs = self.get_obs()
         reward = self.get_reward(y, design)
         done = self.terminal()
@@ -74,21 +81,22 @@ class AdaptiveDesignEnv(Env):
         # return False
 
     def get_reward(self, y, design):
-        log_probs = self.model.get_likelihoods(y, design, self.thetas).squeeze()
+        log_probs = self.model.get_likelihoods(y, design, self.thetas
+                                               ).squeeze(dim=-1)
         log_prob0 = log_probs[0]
         if self.bound_type == LOWER:
             # maximise lower bound
             self.log_products += log_probs
-            logsumprod = torch.logsumexp(self.log_products, dim=0)
-            reward = log_prob0 + self.last_logsumprod - logsumprod
-        else:
-            # minimise upper bound
+        elif self.bound_type == UPPER:
+            # maximise upper bound
             self.log_products += log_probs[1:]
-            logsumprod = torch.logsumexp(self.log_products, dim=0)
-            reward = logsumprod - self.last_logsumprod - log_prob0
+        # elif self.bound_type == CUMULATIVE:
+            # maximise only terminal reward
+
+        logsumprod = torch.logsumexp(self.log_products, dim=0)
+        reward = log_prob0 + self.last_logsumprod - logsumprod
         self.last_logsumprod = logsumprod
         return reward
-
 
     def render(self, mode='human'):
         pass
