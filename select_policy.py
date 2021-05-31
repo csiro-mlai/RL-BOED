@@ -71,7 +71,7 @@ def main(src, results, dest, n_contrastive_samples, n_parallel,
                         design[j*n_parallel:(j+1)*n_parallel])
                     rewards[-1].append(reward)
                 rewards[-1] = torch.stack(rewards[-1])
-    rewards = torch.cat(rewards, dim=1).squeeze()
+    rewards = torch.cat(rewards, dim=1)#.squeeze()
     print(rewards.shape)
     cumsum_rewards = torch.cumsum(rewards, dim=0)
     sum_rewards = torch.sum(rewards, dim=0)

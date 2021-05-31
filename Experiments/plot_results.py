@@ -26,7 +26,7 @@ means = data[typ].astype(np.float64).reshape((-1,))
 smoothed_means = np.asarray([means[i:i+step].mean() for i in range(means.size - step)])
 fig = plt.figure(figsize=(width, height), dpi=fig_dpi)
 fig.clear()
-xlim, ylim = [-5,10000], [4,13]
+xlim, ylim = [-5,10000], [0,13]
 ax = fig.add_subplot(1,1,1, xlim=xlim, ylim=ylim)
 ax.plot(np.arange(0, smoothed_means.size), smoothed_means)
 # ax.vlines(redline_x, ymin=ylim[0], ymax=ylim[1], colors=["red"], linestyles='dashed')
