@@ -8,7 +8,7 @@ from garage.torch import set_gpu_mode
 from pyro import wrap_experiment
 from pyro.algos import SAC
 from pyro.envs import AdaptiveDesignEnv, GarageEnv, normalize
-from pyro.envs.adaptive_design_env import LOWER, UPPER
+from pyro.envs.adaptive_design_env import LOWER, UPPER, TERMINAL
 from pyro.experiment import LocalRunner
 from pyro.models.adaptive_experiment_model import CESModel
 from pyro.policies.adaptive_tanh_gaussian_policy import \
@@ -143,10 +143,11 @@ if __name__ == "__main__":
     parser.add_argument("--log-dir", default=None, type=str)
     parser.add_argument("--snapshot-mode", default="gap", type=str)
     parser.add_argument("--snapshot-gap", default=500, type=int)
-    parser.add_argument("--bound-type", default="lower", type=str.lower,
-                        choices=["lower", "upper"])
+    parser.add_argument("--bound-type", default="terminal", type=str.lower,
+                        choices=["lower", "upper", "terminal"])
     args = parser.parse_args()
-    bound_type = LOWER if args.bound_type == "lower" else UPPER
+    bound_type_dict = {"lower": LOWER, "upper": UPPER, "terminal": TERMINAL}
+    bound_type = bound_type_dict[args.bound_type]
     exp_id = args.id
     main(n_parallel=args.n_parallel, budget=args.budget, n_rl_itr=args.n_rl_itr,
          n_cont_samples=args.n_contr_samples, seed=seeds[exp_id - 1],

@@ -4,7 +4,7 @@ from gym import Env
 
 LOWER = 0
 UPPER = 1
-CUMULATIVE = 2
+TERMINAL = 2
 
 
 class AdaptiveDesignEnv(Env):
@@ -42,7 +42,7 @@ class AdaptiveDesignEnv(Env):
         self.n_parallel = n_parallel
         self.history = []
         self.log_products = torch.zeros((
-            self.l + 1 if self.bound_type == LOWER else self.l,
+            self.l + 1 if self.bound_type in [LOWER, TERMINAL] else self.l,
             self.n_parallel
         ))
         self.last_logsumprod = torch.logsumexp(self.log_products, dim=0)
@@ -84,17 +84,24 @@ class AdaptiveDesignEnv(Env):
         log_probs = self.model.get_likelihoods(y, design, self.thetas
                                                ).squeeze(dim=-1)
         log_prob0 = log_probs[0]
-        if self.bound_type == LOWER:
+        if self.bound_type in [LOWER, TERMINAL]:
             # maximise lower bound
             self.log_products += log_probs
         elif self.bound_type == UPPER:
             # maximise upper bound
             self.log_products += log_probs[1:]
-        # elif self.bound_type == CUMULATIVE:
-            # maximise only terminal reward
 
         logsumprod = torch.logsumexp(self.log_products, dim=0)
-        reward = log_prob0 + self.last_logsumprod - logsumprod
+        if self.bound_type == LOWER:
+            reward = log_prob0 + self.last_logsumprod - logsumprod
+        elif self.bound_type == UPPER:
+            reward = logsumprod - self.last_logsumprod + log_prob0
+        elif self.bound_type == TERMINAL:
+            if self.terminal():
+                reward = self.log_products[0] - logsumprod + \
+                         torch.log(torch.as_tensor(self.l + 1.))
+            else:
+                reward = torch.zeros(self.n_parallel)
         self.last_logsumprod = logsumprod
         return reward
 
