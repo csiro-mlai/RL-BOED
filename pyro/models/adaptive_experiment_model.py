@@ -1,9 +1,11 @@
 from abc import ABC
 
 from contextlib import ExitStack
+from functools import partial
 from pyro import poutine
 from pyro.contrib.util import iter_plates_to_shape, lexpand, rexpand, rmv
 from pyro.util import is_bad
+from scipy.integrate import solve_ivp
 
 import torch
 import pyro
@@ -20,17 +22,45 @@ class ExperimentModel(ABC):
     def __init__(self):
         self.epsilon = torch.tensor(EPS)
 
+    def sanity_check(self):
+        assert self.var_dim > 0
+        assert len(self.var_names) > 0
+
     def make_model(self):
         raise NotImplementedError
 
-    def run_experiment(self, design, y):
+    def reset(self, n_parallel):
         raise NotImplementedError
+
+    def run_experiment(self, design, theta):
+        """
+        Execute an experiment with given design.
+        """
+        # create model from sampled params
+        cond_model = pyro.condition(self.make_model(), data=theta)
+
+        # infer experimental outcome given design and model
+        y = cond_model(design)
+        y = y.detach().clone()
+        return y
 
     def get_likelihoods(self, y, design, thetas):
-        raise NotImplementedError
+        size = thetas[self.var_names[0]].shape[0]
+        cond_dict = dict(thetas)
+        cond_dict.update({self.obs_label: lexpand(y, size)})
+        cond_model = pyro.condition(self.make_model(), data=cond_dict)
+        trace = poutine.trace(cond_model).get_trace(lexpand(design, size))
+        trace.compute_log_prob()
+        likelihoods = trace.nodes[self.obs_label]["log_prob"]
+        return likelihoods
 
     def sample_theta(self, num_theta):
-        raise NotImplementedError
+        dummy_design = torch.zeros(
+            (num_theta, self.n_parallel, 1, 1, self.var_dim))
+        cur_model = self.make_model()
+        trace = poutine.trace(cur_model).get_trace(dummy_design)
+        thetas = dict([(l, trace.nodes[l]["value"]) for l in self.var_names])
+        return thetas
 
 
 class CESModel(ExperimentModel):
@@ -62,6 +92,8 @@ class CESModel(ExperimentModel):
             "u_sig",
         ]
         self.var_names = ["rho", "alpha", "u"]
+        self.var_dim = 6
+        self.sanity_check()
 
     def reset(self, init_rho_model=None, init_alpha_model=None,
               init_mu_model=None, init_sig_model=None, n_parallel=None):
@@ -123,18 +155,6 @@ class CESModel(ExperimentModel):
 
         return model
 
-    def run_experiment(self, design, theta):
-        """
-        Execute an experiment with given design.
-        """
-        # create model from sampled params
-        cond_model = pyro.condition(self.make_model(), data=theta)
-
-        # infer experimental outcome given design and model
-        y = cond_model(design)
-        y = y.detach().clone()
-        return y
-
     def get_params(self):
         return torch.cat(
             [
@@ -146,36 +166,126 @@ class CESModel(ExperimentModel):
             dim=-1
         )
 
-    def get_likelihoods(self, y, design, thetas):
-        size = thetas["rho"].shape[0]
-        cond_dict = dict(thetas)
-        cond_dict.update({"y": lexpand(y, size)})
-        cond_model = pyro.condition(self.make_model(), data=cond_dict)
-        trace = poutine.trace(cond_model).get_trace(lexpand(design, size))
-        trace.compute_log_prob()
-        likelihoods = trace.nodes["y"]["log_prob"]
-        return likelihoods
 
-    def sample_theta(self, num_theta):
-        dummy_design = torch.zeros((num_theta, self.n_parallel, 1, 1, 6))
-        cur_model = self.make_model()
-        trace = poutine.trace(cur_model).get_trace(dummy_design)
-        thetas = dict([(l, trace.nodes[l]["value"]) for l in self.var_names])
-        return thetas
+def holling2(a, th, t, n):
+    an = a * n
+    return -an / (1 + an * th)
 
 
-class DeathModel(ExperimentModel):
-    def __init__(self):
+class PreyModel(ExperimentModel):
+    def __init__(self, a_mu=None, a_sig=None, th_mu=None, th_sig=None, tau=24,
+                 n_parallel=1, obs_sd=0.005, obs_label="y"):
         super().__init__()
-
-    def get_likelihoods(self, y, design, thetas):
-        pass
-
-    def run_experiment(self, design, y):
-        pass
-
-    def sample_theta(self, num_theta):
-        pass
+        self.a_mu = a_mu if a_mu is not None \
+            else torch.ones(n_parallel, 1) * -1.4
+        self.a_sig = a_sig if a_sig is not None \
+            else torch.ones(n_parallel, 1) * 1.35
+        self.th_mu = th_mu if th_mu is not None \
+            else torch.ones(n_parallel, 1) * -1.4
+        self.th_sig = th_sig if th_sig is not None \
+            else torch.ones(n_parallel, 1) * 1.35
+        self.tau = tau
+        self.n_parallel = n_parallel
+        self.obs_sd = obs_sd
+        self.obs_label = obs_label
+        self.var_names = ["a", "th"]
+        self.var_dim = 2
+        self.sanity_check()
 
     def make_model(self):
+        def model(design):
+            if is_bad(design):
+                raise ArithmeticError("bad design, contains nan or inf")
+            batch_shape = design.shape[:-2]
+            with ExitStack() as stack:
+                for plate in iter_plates_to_shape(batch_shape):
+                    stack.enter_context(plate)
+                a = pyro.sample(
+                    "a",
+                    dist.LogNormal(
+                        self.a_mu.expand(batch_shape),
+                        self.a_sig.expand(batch_shape)
+                    )
+                )
+                th = pyro.sample(
+                    "th",
+                    dist.LogNormal(
+                        self.th_mu.expand(batch_shape),
+                        self.th_sig.expand(batch_shape)
+                    )
+                )
+                diff_func = partial(holling2, a.numpy(), th.numpy())
+                n_t = solve_ivp(diff_func, (0, self.tau), design.numpy())
+                n_t = torch.as_tensor(n_t)
+                p_t = (design - n_t) / design
+                emission_dist = dist.Binomial(design, p_t)
+                n = pyro.sample(
+                    self.obs_label, emission_dist
+                )
+                return n
+
+        return model
+
+
+class SourceModel(ExperimentModel):
+    def __init__(self, d=2, k=2, theta_mu=None, theta_sig=None, alpha=None,
+                 b=1e-1, m=1e-4, n_parallel=1, obs_sd=0.5, obs_label="y"):
+        super().__init__()
+        self.theta_mu = theta_mu if theta_mu is not None \
+            else torch.zeros(n_parallel, 1, d, k)
+        self.theta_sig = theta_sig if theta_sig is not None \
+            else torch.ones(n_parallel, 1, d, k)
+        self.alpha = alpha if alpha is not None \
+            else torch.ones(n_parallel, 1, k)
+        self.d, self.k, self.b, self.m = d, k, b, m
+        self.obs_sd, self.obs_label = obs_sd, obs_label
+        self.n_parallel = n_parallel
+        self.var_names = ["theta"]
+        self.var_dim = d
+        self.sanity_check()
+
+    def make_model(self):
+        def model(design):
+            if is_bad(design):
+                raise ArithmeticError("bad design, contains nan or inf")
+            batch_shape = design.shape[:-2]
+            with ExitStack() as stack:
+                for plate in iter_plates_to_shape(batch_shape):
+                    stack.enter_context(plate)
+                theta_shape = batch_shape + self.theta_mu.shape[-2:]
+                theta = pyro.sample(
+                    "theta",
+                    dist.Normal(
+                        self.theta_mu.expand(theta_shape),
+                        self.theta_sig.expand(theta_shape)
+                    ).to_event(2)
+                )
+                distance = torch.square(theta - design).sum(dim=-2)
+                ratio = self.alpha / (self.m + distance)
+                mu = self.b + ratio.sum(dim=-1, keepdims=True)
+                emission_dist = dist.Normal(torch.log(mu), self.obs_sd).to_event(1)
+                y = pyro.sample(self.obs_label, emission_dist)
+                return y
+
+        return model
+
+    def reset(self, n_parallel):
         pass
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

@@ -45,9 +45,9 @@ class BatchBox(Box):
         self.low = low
         self.high = high
 
-    def sample(self):
-        sample = torch.distributions.Uniform(self.low, self.high).sample()
-        return sample.reshape((1,) + self.shape)
+    def sample(self, shape=(1,)):
+        sample = torch.distributions.Uniform(self.low, self.high).sample(shape)
+        return sample.reshape(shape + self.shape)
 
     def contains(self, x):
         if isinstance(x, list):

@@ -95,7 +95,7 @@ class AdaptiveDesignEnv(Env):
         if self.bound_type == LOWER:
             reward = log_prob0 + self.last_logsumprod - logsumprod
         elif self.bound_type == UPPER:
-            reward = logsumprod - self.last_logsumprod + log_prob0
+            reward = logsumprod - self.last_logsumprod - log_prob0
         elif self.bound_type == TERMINAL:
             if self.terminal():
                 reward = self.log_products[0] - logsumprod + \
