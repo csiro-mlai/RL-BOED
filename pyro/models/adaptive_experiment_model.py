@@ -263,11 +263,21 @@ class SourceModel(ExperimentModel):
                 distance = torch.square(theta - design).sum(dim=-2)
                 ratio = self.alpha / (self.m + distance)
                 mu = self.b + ratio.sum(dim=-1, keepdims=True)
-                emission_dist = dist.Normal(torch.log(mu), self.obs_sd).to_event(1)
+                emission_dist = dist.LogNormal(
+                    torch.log(mu), self.obs_sd
+                ).to_event(1)
                 y = pyro.sample(self.obs_label, emission_dist)
                 return y
 
         return model
+
+    def run_experiment(self, design, theta):
+        y = super().run_experiment(design, theta)
+        return torch.log(y)
+
+    def get_likelihoods(self, y, design, thetas):
+        y = torch.exp(y)
+        return super().get_likelihoods(y, design, thetas)
 
     def reset(self, n_parallel):
         pass
