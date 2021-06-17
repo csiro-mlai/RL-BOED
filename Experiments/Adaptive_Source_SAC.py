@@ -32,7 +32,7 @@ def main(n_parallel=1, budget=1, n_rl_itr=1, n_cont_samples=10, seed=0,
          log_dir=None, snapshot_mode='gap', snapshot_gap=500, bound_type=LOWER):
     @wrap_experiment(log_dir=log_dir, snapshot_mode=snapshot_mode,
                      snapshot_gap=snapshot_gap)
-    def sac_ces(ctxt=None, n_parallel=1, budget=1, n_rl_itr=1,
+    def sac_source(ctxt=None, n_parallel=1, budget=1, n_rl_itr=1,
                 n_cont_samples=10, seed=0):
         if torch.cuda.is_available():
             set_gpu_mode(True)
@@ -44,9 +44,9 @@ def main(n_parallel=1, budget=1, n_rl_itr=1, n_cont_samples=10, seed=0,
         deterministic.set_seed(seed)
         pyro.set_rng_seed(seed)
         layer_size = 128
-        design_space = BatchBox(low=-8., high=8., shape=(1, 1, 1, 2))
-        obs_space = BatchBox(low=torch.as_tensor([-8., -8., -7.]),
-                             high=torch.as_tensor([8., 8., 14.])
+        design_space = BatchBox(low=-4., high=4., shape=(1, 1, 1, 2))
+        obs_space = BatchBox(low=torch.as_tensor([-8., -8., -3.]),
+                             high=torch.as_tensor([8., 8., 10.])
                              )
         model = SourceModel(n_parallel=n_parallel)
         def make_env(design_space, obs_space, model, budget, n_cont_samples,
@@ -95,16 +95,6 @@ def main(n_parallel=1, budget=1, n_rl_itr=1, n_cont_samples=10, seed=0,
         qf2 = make_q_func()
 
         runner = LocalRunner(snapshot_config=ctxt)
-        true_model = pyro.condition(
-            model.make_model(),
-            {
-                "rho": torch.tensor([.9, .1]),
-                "alpha": torch.tensor([.2, .3, .5]),
-                "u": torch.tensor(10.)
-            },
-        )
-        eval_env = make_env(design_space, obs_space, model, budget,
-                            n_cont_samples, bound_type, true_model=true_model)
         replay_buffer = PathBuffer(capacity_in_transitions=int(1e6))
 
         sac = SAC(env_spec=env.spec,
@@ -121,14 +111,14 @@ def main(n_parallel=1, budget=1, n_rl_itr=1, n_cont_samples=10, seed=0,
                   reward_scale=1.,
                   steps_per_epoch=1,
                   num_evaluation_trajectories=n_parallel,
-                  eval_env=eval_env)
+                  target_entropy=1e-2)
 
         sac.to()
         runner.setup(algo=sac, env=env, sampler_cls=LocalSampler,
                      worker_class=VectorWorker)
         runner.train(n_epochs=n_rl_itr, batch_size=n_parallel * budget)
 
-    sac_ces(n_parallel=n_parallel, budget=budget, n_rl_itr=n_rl_itr,
+    sac_source(n_parallel=n_parallel, budget=budget, n_rl_itr=n_rl_itr,
             n_cont_samples=n_cont_samples, seed=seed)
 
 

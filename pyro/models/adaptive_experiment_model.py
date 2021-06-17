@@ -232,9 +232,9 @@ class SourceModel(ExperimentModel):
                  b=1e-1, m=1e-4, n_parallel=1, obs_sd=0.5, obs_label="y"):
         super().__init__()
         self.theta_mu = theta_mu if theta_mu is not None \
-            else torch.zeros(n_parallel, 1, d, k)
+            else torch.zeros(n_parallel, 1, k, d)
         self.theta_sig = theta_sig if theta_sig is not None \
-            else torch.ones(n_parallel, 1, d, k)
+            else torch.ones(n_parallel, 1, k, d)
         self.alpha = alpha if alpha is not None \
             else torch.ones(n_parallel, 1, k)
         self.d, self.k, self.b, self.m = d, k, b, m
@@ -260,10 +260,10 @@ class SourceModel(ExperimentModel):
                         self.theta_sig.expand(theta_shape)
                     ).to_event(2)
                 )
-                distance = torch.square(theta - design).sum(dim=-2)
+                distance = torch.square(theta - design).sum(dim=-1)
                 ratio = self.alpha / (self.m + distance)
                 mu = self.b + ratio.sum(dim=-1, keepdims=True)
-                emission_dist = dist.LogNormal(
+                emission_dist = dist.Normal(
                     torch.log(mu), self.obs_sd
                 ).to_event(1)
                 y = pyro.sample(self.obs_label, emission_dist)
@@ -271,31 +271,8 @@ class SourceModel(ExperimentModel):
 
         return model
 
-    def run_experiment(self, design, theta):
-        y = super().run_experiment(design, theta)
-        return torch.log(y)
-
-    def get_likelihoods(self, y, design, thetas):
-        y = torch.exp(y)
-        return super().get_likelihoods(y, design, thetas)
-
     def reset(self, n_parallel):
-        pass
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+        self.n_parallel = n_parallel
+        self.theta_mu = torch.zeros(n_parallel, 1, self.k, self.d)
+        self.theta_sig = torch.ones(n_parallel, 1, self.k, self.d)
+        self.alpha = torch.ones(n_parallel, 1, self.k)

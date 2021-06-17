@@ -7,6 +7,7 @@ import numpy as np
 import torch
 
 from time import time
+from pyro.contrib.util import lexpand
 from pyro.envs.adaptive_design_env import LOWER, UPPER
 from garage.experiment import deterministic
 
@@ -16,7 +17,7 @@ if torch.cuda.is_available():
 
 
 def main(src, results, dest, n_contrastive_samples, n_parallel,
-         seq_length, edit_type, n_samples, seed):
+         seq_length, edit_type, n_samples, seed, bound_type):
     deterministic.set_seed(seed)
     if edit_type != 'a' and edit_type != 'w':
         sys.exit(f"inadmissible edit_type: {edit_type}")
@@ -25,21 +26,46 @@ def main(src, results, dest, n_contrastive_samples, n_parallel,
     print(f"loaded data from {src}")
     algo, env = data['algo'], data['env']
     pi = algo.policy
+    qf1, qf2 = algo._qf1, algo._qf2
     env.env.env.l = n_contrastive_samples
     env.env.env.n_parallel = n_parallel
-    env.env.env.bound_type = LOWER
+    env.env.env.bound_type = bound_type
     rewards = []
     rep = n_samples // env.env.env.n_parallel
     print(f"{n_samples} / {env.env.env.n_parallel} = {rep} iterations to run")
     t0 = time()
+    random = False
     if results is None:
         for j in range(rep):
             obs = env.reset(n_parallel=n_parallel)
+            print(env.env.env.theta0['theta'][0, 0])
             rewards.append([])
+            print("\n")
             for i in range(seq_length):
-                act = pi.get_actions(obs)[0].reshape(
-                    env.env.env.n_parallel, 1, 1, -1)
+                exp_obs = lexpand(obs, 100)
+                act, dist_info = pi.get_actions(exp_obs)
+                opt_index = torch.argmax(
+                    torch.min(qf1(exp_obs, act), qf2(exp_obs, act)),
+                    dim=0,
+                    keepdim=True)
+                opt_index = opt_index.expand((1,) + act.shape[1:])
+                act = torch.gather(act, 0, opt_index).squeeze()
+                if random:
+                    # act = env.action_space.sample((n_parallel,))/8.
+                    low, high = env.action_space.bounds
+                    act_dist = torch.distributions.Normal(
+                        torch.zeros_like(low), torch.ones_like(high))
+                    act = act_dist.sample((n_parallel,))/8.
+                act = act.reshape(env.env.env.n_parallel, 1, 1, -1)
+                print(f"act {act[0] * 8}")
+                # print(f"mean {dist_info['mean'][0] * 8}")
+                # print(f"std {dist_info['log_std'][0].exp() * 8}")
                 obs, reward, _, _ = env.step(act)
+                obs_lb, obs_ub = env.observation_space.bounds
+                # print(f"obs {obs[0][-1] * (obs_ub - obs_lb) + obs_lb}")
+                # print(f"reward {reward[0]}")
+                if bound_type == UPPER:
+                    reward *= -1
                 rewards[-1].append(reward)
             rewards[-1] = torch.stack(rewards[-1])
     else:
@@ -49,6 +75,8 @@ def main(src, results, dest, n_contrastive_samples, n_parallel,
             for i in range(seq_length):
                 data = pickle.load(results_file)
                 if i == 0:
+                    if not hasattr(data['theta0'], "items"):
+                        data['theta0'] = {'theta': data['theta0']}
                     theta0 = {k: v.cuda() for k, v in data['theta0'].items()}
                 ys.append(data['y'].cuda())
                 designs.append(data['d_star_design'].cuda())
@@ -100,7 +128,10 @@ if __name__ == "__main__":
     parser.add_argument("--seq_length", default=20, type=int)
     parser.add_argument("--edit_type", default="a", type=str)
     parser.add_argument("--seed", default=1, type=int)
+    parser.add_argument("--bound_type", default="lower", type=str.lower,
+                        choices=["lower", "upper"])
     args = parser.parse_args()
+    bound_type = {"lower": LOWER, "upper": UPPER}[args.bound_type]
     main(args.src, args.results, args.dest, args.n_contrastive_samples,
          args.n_parallel, args.seq_length, args.edit_type, args.n_samples,
-         args.seed)
+         args.seed, bound_type)
