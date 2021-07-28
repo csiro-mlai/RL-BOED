@@ -5,7 +5,7 @@ import akro
 import numpy as np
 import torch
 
-from garage.misc import tensor_utils
+from pyro.tensor_utils import concat_tensor_dict_list, slice_nested_dict
 
 
 class TrajectoryBatch(
@@ -285,18 +285,20 @@ class TrajectoryBatch(
         start = 0
         for i, length in enumerate(self.lengths):
             stop = start + length
+            masks = None if self.masks is None else self.masks[start:stop]
+            last_masks = None if self.last_masks is None else self.last_masks[i]
             traj = TrajectoryBatch(
                 env_spec=self.env_spec,
                 observations=self.observations[start:stop],
                 last_observations=self.last_observations[i].unsqueeze(0),
-                masks=self.masks[start:stop] if self.masks else None,
-                last_masks=self.last_masks[i] if self.last_masks else None,
+                masks=masks,
+                last_masks=last_masks,
                 actions=self.actions[start:stop],
                 rewards=self.rewards[start:stop],
                 terminals=self.terminals[start:stop],
-                env_infos=tensor_utils.slice_nested_dict(
+                env_infos=slice_nested_dict(
                     self.env_infos, start, stop),
-                agent_infos=tensor_utils.slice_nested_dict(
+                agent_infos=slice_nested_dict(
                     self.agent_infos, start, stop),
                 lengths=torch.as_tensor([length]))
             trajectories.append(traj)
@@ -408,18 +410,26 @@ class TrajectoryBatch(
         else:
             # The number of observations and timesteps must match.
             observations = torch.cat([p['observations'] for p in paths])
+            # Last observations
             if paths[0].get('next_observations') is not None:
-                last_observations = torch.as_tensor(
+                last_observations = torch.stack(
                     [p['next_observations'][-1] for p in paths])
             else:
-                last_observations = torch.as_tensor(
+                last_observations = torch.stack(
                     [p['observations'][-1] for p in paths])
+            # Last masks
+            if paths[0].get('next_masks') is not None:
+                last_masks = torch.stack(
+                    [p['next_masks'][-1] for p in paths])
+            else:
+                last_masks = torch.stack(
+                    [p['masks'][-1] for p in paths])
 
-        stacked_paths = tensor_utils.concat_tensor_dict_list(paths)
+        stacked_paths = concat_tensor_dict_list(paths)
         return cls(env_spec=env_spec,
                    observations=observations,
                    last_observations=last_observations,
-                   masks=masks,
+                   masks=stacked_paths['masks'],
                    last_masks=last_masks,
                    actions=stacked_paths['actions'],
                    rewards=stacked_paths['rewards'],

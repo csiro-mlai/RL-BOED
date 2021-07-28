@@ -434,3 +434,11 @@ def torch_float(x):
 
 def clip(x, min, max):
     return torch.maximum(torch.minimum(x, max), min)
+
+
+def binary_discount_cumsum(x, discount):
+    if discount == 0:
+        return x
+    elif discount == 1:
+        return torch.flip(torch.cumsum(torch.flip(x, dims=[0]), 0), dims=[0])
+    raise ValueError(f"discount must be 0 or 1 but was {discount}")
