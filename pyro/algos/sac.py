@@ -180,7 +180,7 @@ class SAC(RLAlgorithm):
         if not self._eval_env:
             self._eval_env = runner.get_env_copy()
         last_return = None
-        for _ in runner.step_epochs():
+        for idx in runner.step_epochs():
             for _ in range(self._steps_per_epoch):
                 if not (self.replay_buffer.n_transitions_stored >=
                         self._min_buffer_size):
@@ -228,6 +228,9 @@ class SAC(RLAlgorithm):
                     policy_loss, qf1_loss, qf2_loss = self.train_once()
                 t1 = time.time()
                 print(f"time = {t1 - t0}s")
+            # if idx > 0:
+            #     self._target_entropy *= np.exp(np.log(2) / 20000)
+            print(f"entropy = {self._target_entropy}")
             t0 = time.time()
             last_return = self._evaluate_policy(runner.step_itr)
             t1 = time.time()
