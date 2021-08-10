@@ -2,7 +2,7 @@
 import collections
 import copy
 
-from dowel import tabular
+from pyro.dowel import tabular
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -169,6 +169,25 @@ class VPG(RLAlgorithm):
             kl_after = self._compute_kl_constraint(obs)
             policy_entropy = self._compute_policy_entropy(obs)
 
+        policy_means = torch.stack(
+            [p["agent_infos"]["mean"] for p in paths]
+        ).mean(dim=(0, 1)).cpu().numpy()
+        policy_stds = torch.stack(
+            [p["agent_infos"]["log_std"] for p in paths]
+        ).exp().mean(dim=(0, 1)).cpu().numpy()
+
+        tabular.record('Action/MeanAction',
+                       actions.mean(dim=(0, 1)).cpu().numpy())
+        tabular.record('Action/StdAction',
+                       actions.std(dim=(0, 1)).cpu().numpy())
+        tabular.record("Policy/MeanStd", policy_stds)
+        tabular.record("Policy/Mean", policy_means)
+        tabular.record('Return/MeanReturn', returns[:, 0].mean().cpu().numpy())
+        tabular.record('Return/StdReturn', returns[:, 0].std().cpu().numpy())
+        tabular.record('Return/LowerQuartileReturn',
+                       torch.quantile(returns[:, 0], 0.25).cpu().numpy())
+        tabular.record('Return/UpperQuartileReturn',
+                       torch.quantile(returns[:, 0], 0.75).cpu().numpy())
         with tabular.prefix(self.policy.name):
             tabular.record('/LossBefore', policy_loss_before.item())
             tabular.record('/LossAfter', policy_loss_after.item())

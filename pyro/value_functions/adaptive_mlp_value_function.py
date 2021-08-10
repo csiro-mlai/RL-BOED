@@ -3,7 +3,7 @@ import numpy as np
 import torch
 from torch import nn
 
-from garage.torch.modules import GaussianMLPModule, MLPModule
+from garage.torch.modules import GaussianMLPTwoHeadedModule, MLPModule
 from garage.torch.value_functions.value_function import ValueFunction
 
 
@@ -80,7 +80,7 @@ class AdaptiveMLPValueFunction(ValueFunction):
             output_b_init=output_b_init,
             layer_normalization=layer_normalization)
 
-        self._emitter = GaussianMLPModule(
+        self._emitter = GaussianMLPTwoHeadedModule(
             input_dim=encoding_dim,
             output_dim=self._output_dim,
             hidden_sizes=emitter_sizes,

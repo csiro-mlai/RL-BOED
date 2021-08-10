@@ -2,7 +2,7 @@
 import torch
 
 from pyro.algos import VPG
-from garage.torch.optimizers import ConjugateGradientOptimizer
+from pyro.optim import ConjugateGradientOptimizer
 from garage.torch.optimizers import OptimizerWrapper
 
 

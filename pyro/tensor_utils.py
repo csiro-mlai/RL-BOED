@@ -80,11 +80,11 @@ def unflatten_tensors(flattened, tensor_shapes):
         list[numpy.ndarray]: Unflattened list of tensors.
 
     """
-    tensor_sizes = list(map(np.prod, tensor_shapes))
-    indices = np.cumsum(tensor_sizes)[:-1]
+    tensor_shapes = list(map(torch.as_tensor, tensor_shapes))
+    tensor_sizes = list(map(torch.prod, tensor_shapes))
     return [
-        np.reshape(pair[0], pair[1])
-        for pair in zip(np.split(flattened, indices), tensor_shapes)
+        torch.reshape(pair[0], tuple(pair[1]))
+        for pair in zip(torch.split(flattened, tensor_sizes), tensor_shapes)
     ]
 
 

@@ -5,7 +5,7 @@ import torch
 from torch import nn
 
 from garage.torch import global_device
-from garage.torch.modules import GaussianMLPModule, MLPModule
+from garage.torch.modules import GaussianMLPTwoHeadedModule, MLPModule
 from garage.torch.policies.stochastic_policy import StochasticPolicy
 
 
@@ -87,7 +87,7 @@ class AdaptiveGaussianMLPPolicy(StochasticPolicy):
             output_w_init=output_w_init,
             output_b_init=output_b_init,
             layer_normalization=layer_normalization)
-        self._emitter = GaussianMLPModule(
+        self._emitter = GaussianMLPTwoHeadedModule(
             input_dim=encoding_dim,
             output_dim=self._action_dim,
             hidden_sizes=emitter_sizes,

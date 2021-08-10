@@ -15,7 +15,6 @@ from pyro.experiment import LocalRunner
 from pyro.models.adaptive_experiment_model import SourceModel
 from pyro.policies import AdaptiveGaussianMLPPolicy
 from pyro.value_functions import AdaptiveMLPValueFunction
-from pyro.replay_buffer import PathBuffer
 from pyro.sampler.local_sampler import LocalSampler
 from pyro.sampler.vector_worker import VectorWorker
 from pyro.spaces.batch_box import BatchBox
@@ -73,10 +72,10 @@ def main(n_parallel=1, budget=1, n_rl_itr=1, n_cont_samples=10, seed=0,
                 return AdaptiveGaussianMLPPolicy(
                     env_spec=env.spec,
                     encoder_sizes=[layer_size, layer_size],
-                    encoder_nonlinearity=nn.ReLU,
+                    encoder_nonlinearity=nn.Tanh,
                     encoder_output_nonlinearity=None,
                     emitter_sizes=[layer_size, layer_size],
-                    emitter_nonlinearity=nn.ReLU,
+                    emitter_nonlinearity=nn.Tanh,
                     emitter_output_nonlinearity=None,
                     encoding_dim=layer_size // 2,
                     init_std=np.sqrt(1 / 3),
@@ -88,10 +87,10 @@ def main(n_parallel=1, budget=1, n_rl_itr=1, n_cont_samples=10, seed=0,
                 return AdaptiveMLPValueFunction(
                     env_spec=env.spec,
                     encoder_sizes=[layer_size, layer_size],
-                    encoder_nonlinearity=nn.ReLU,
+                    encoder_nonlinearity=nn.Tanh,
                     encoder_output_nonlinearity=None,
                     emitter_sizes=[layer_size, layer_size],
-                    emitter_nonlinearity=nn.ReLU,
+                    emitter_nonlinearity=nn.Tanh,
                     emitter_output_nonlinearity=None,
                     encoding_dim=16
                 )
@@ -99,14 +98,13 @@ def main(n_parallel=1, budget=1, n_rl_itr=1, n_cont_samples=10, seed=0,
             env = make_env(design_space, obs_space, model, budget,
                            n_cont_samples, bound_type)
             policy = make_policy()
-            qf = make_v_func()
+            vf = make_v_func()
             trpo = TRPO(env_spec=env.spec,
                         policy=policy,
-                        value_function=qf,
+                        value_function=vf,
                         max_path_length=budget,
                         discount=discount,
-                        center_adv=False,
-                        )
+                        center_adv=False)
 
         runner = LocalRunner(snapshot_config=ctxt)
         runner.setup(algo=trpo, env=env, sampler_cls=LocalSampler,
