@@ -70,7 +70,7 @@ class CensoredSigmoidNormal(TorchDistribution):
 
         # To compute the log cdf, we use log(cdf), except where it would give -inf
         # In those cases we use an asymptotic formula log_prob(value) - value.abs().log()
-        crit = 1e-40
+        crit = 2 * torch.finfo(value.dtype).tiny
         upper_cdf = 1. - self.base_dist.cdf(self.upper_lim)
         lower_cdf = self.base_dist.cdf(self.lower_lim)
         mask_upper = upper_cdf < crit

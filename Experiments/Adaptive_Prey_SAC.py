@@ -72,7 +72,7 @@ def main(n_parallel=1, budget=1, n_rl_itr=1, n_cont_samples=10, seed=0,
                 emitter_nonlinearity=nn.ReLU,
                 emitter_output_nonlinearity=None,
                 encoding_dim=layer_size // 2,
-                init_std=np.sqrt(1 / 6),
+                init_std=np.sqrt(1 / 3),
                 min_std=np.exp(-20.),
                 max_std=np.exp(0.),
             )
@@ -122,8 +122,7 @@ def main(n_parallel=1, budget=1, n_rl_itr=1, n_cont_samples=10, seed=0,
                   reward_scale=1.,
                   steps_per_epoch=1,
                   num_evaluation_trajectories=n_parallel,
-                  eval_env=eval_env,
-                  initial_log_entropy=np.log(1e-5),)
+                  eval_env=eval_env)
 
         sac.to()
         runner.setup(algo=sac, env=env, sampler_cls=LocalSampler,

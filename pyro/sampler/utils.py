@@ -3,9 +3,11 @@
 import time
 
 import numpy as np
+import torch
 
 from collections import defaultdict
 from garage.misc import tensor_utils
+from torch.nn.functional import pad
 
 
 def transpose_tensor(arr_list):
@@ -42,22 +44,22 @@ def rollout(env,
             distribution.
 
     Returns:
-        dict[str, np.ndarray or dict]: Dictionary, with keys:
-            * observations(np.array): Flattened array of observations.
+        dict[str, torch.Tensor or dict]: Dictionary, with keys:
+            * observations(torch.Tensor): Flattened array of observations.
                 There should be one more of these than actions. Note that
                 observations[i] (for i < len(observations) - 1) was used by the
                 agent to choose actions[i]. Should have shape (T + 1, S^*) (the
                 unflattened state space of the current environment).
-            * actions(np.array): Non-flattened array of actions. Should have
+            * actions(torch.Tensor): Non-flattened array of actions. Should have
                 shape (T, S^*) (the unflattened action space of the current
                 environment).
-            * rewards(np.array): Array of rewards of shape (T,) (1D array of
+            * rewards(torch.Tensor): Array of rewards of shape (T,) (1D array of
                 length timesteps).
-            * agent_infos(Dict[str, np.array]): Dictionary of stacked,
+            * agent_infos(Dict[str, torch.Tensor]): Dictionary of stacked,
                 non-flattened `agent_info` arrays.
-            * env_infos(Dict[str, np.array]): Dictionary of stacked,
+            * env_infos(Dict[str, torch.Tensor]): Dictionary of stacked,
                 non-flattened `env_info` arrays.
-            * dones(np.array): Array of termination signals.
+            * dones(torch.Tensor): Array of termination signals.
 
     """
     observations = []
@@ -77,6 +79,7 @@ def rollout(env,
             a = agent_info['mean']
         a_shape = (n_parallel,) + env.action_space.shape[1:]
         next_o, r, d, env_info = env.step(a.reshape(a_shape))
+        o = pad(o, (0, 0, 0, max_path_length - path_length, 0, 0))
         observations.append(o)
         rewards.append(r)
         actions.append(a)
@@ -98,16 +101,26 @@ def rollout(env,
             time.sleep(timestep / speedup)
 
     for k, v in agent_infos.items():
-        agent_infos[k] = np.concatenate(np.stack(v, axis=1))
+        agent_infos[k] = torch.cat(torch.split(torch.stack(v, dim=1), 1), dim=1
+                                   ).squeeze(0)
     for k, v in env_infos.items():
-            env_infos[k] = np.concatenate(np.stack(v, axis=1))
+        if torch.is_tensor(v[0]):
+            env_infos[k] = torch.cat(
+                torch.split(torch.stack(v, dim=1), 1), dim=1).squeeze(0)
+        else:
+            env_infos[k] = torch.cat(
+                torch.split(torch.as_tensor(v), 1), dim=1).squeeze(0)
     return dict(
-        observations=np.concatenate(np.stack(observations, axis=1)),
-        actions=np.concatenate(np.stack(actions, axis=1)),
-        rewards=np.concatenate(np.stack(rewards, axis=1)),
+        observations=torch.cat(
+            torch.split(torch.stack(observations, dim=1), 1), dim=1).squeeze(0),
+        actions=torch.cat(
+            torch.split(torch.stack(actions, dim=1), 1), dim=1).squeeze(0),
+        rewards=torch.cat(
+            torch.split(torch.stack(rewards, dim=1), 1), dim=1).squeeze(0),
         agent_infos=agent_infos,
         env_infos=env_infos,
-        dones=np.concatenate(np.stack(dones, axis=1)),
+        dones=torch.cat(
+            torch.split(torch.stack(dones, dim=1), 1), dim=1).squeeze(0),
     )
 
 

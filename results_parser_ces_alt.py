@@ -14,12 +14,18 @@ from matplotlib.ticker import MaxNLocator
 output_dir = os.path.join(os.path.dirname(__file__), "run_outputs/ces/")
 cmap = plt.get_cmap("Paired")
 COLOURS = {'rand': cmap(1),
+           'rl-13-2500': cmap(2),
            'const': cmap(3),
-           'const-1': cmap(4),
+           'rl-1': cmap(4),
+           'rl-9-2500': cmap(7),
+           'rl-4500': cmap(8),
+           'rl-3500': cmap(5),
+           'rl-2500': cmap(9),
+           'rl-17-9500': cmap(3),
            'const-2': cmap(5),
            'const-3': cmap(6),
            }
-VALUE_LABELS = {"Entropy": "Posterior entropy",
+VALUE_LABELS = {"Entropy": "Information Gain",
                 "L2 distance": "Expected L2 distance from posterior to truth",
                 "Optimized EIG": "Maximized EIG",
                 "EIG gap": "Difference between maximum and mean EIG",
@@ -28,11 +34,18 @@ VALUE_LABELS = {"Entropy": "Posterior entropy",
                 "slope_rmse": 'RMSE in $u$ estimate',
                 "total_rmse": 'Total RMSE',
                 "Imax": "EIG lower bound"}
-LABELS = {'rand': 'Random', 'const': 'Foster', 'const-1': 'Foster-Markov',
-          'const-2': 'Foster 1-particle', 'const-3': 'Foster-mod', }
+LABELS = {'rand': 'Random', 'const': 'Foster', 'rl-13-2500': 'RL-13-2500', 'rl-9-2500': 'RL-9-2500', 'rl-4500': 'RL-4500',
+          'rl-1': 'RL-1step', 'rl-3500': 'RL-3500', 'rl-2500': 'RL-2500', 'const-2': 'Foster 1-particle',
+          'const-3': 'variational PCE', 'rl-17-9500': 'RL-17-9500',}
 MARKERS = {'rand': 'x',
            'const': '.',
-           'const-1': 's',
+           'rl-13-2500': '.',
+           'rl-1': 's',
+           'rl-9-2500': 's',
+           'rl-4500': 's',
+           'rl-3500': '|',
+           'rl-2500': '|',
+           'rl-17-9500': 'x',
            'const-2': '|',
            'const-3': 'o',
            }
@@ -84,6 +97,12 @@ def main(fnames, findices, plot, percentile):
     for fname in fnames:
         with open(fname, 'rb') as results_file:
             try:
+                prior_rho_dist = torch.distributions.Beta(1., 1.)
+                prior_alpha_dist = torch.distributions.Dirichlet(torch.ones(3))
+                prior_slope_dist = torch.distributions.LogNormal(1., 3.)
+                prior_entropy = prior_rho_dist.entropy() + \
+                                prior_alpha_dist.entropy() + \
+                                prior_slope_dist.entropy()
                 while True:
                     results = pickle.load(results_file)
                     print(fname, results.get('num_gradient_steps', 0), results.get('num_samples', 0),
@@ -104,7 +123,12 @@ def main(fnames, findices, plot, percentile):
                     alpha_rmse = torch.sqrt((alpha_dist.mean - torch.tensor([.2, .3, .5])).pow(2).sum(-1))
                     slope_rmse = torch.sqrt((slope_dist.mean - torch.tensor(10.)).pow(2) + slope_dist.variance)
                     total_rmse = torch.sqrt(rho_rmse ** 2 + alpha_rmse ** 2 + slope_rmse ** 2)
-                    entropy = rho_dist.entropy() + alpha_dist.entropy() + slope_dist.entropy()
+                    if 'spce' in results:
+                    # if False:
+                        entropy = results['spce']
+                    else:
+                        entropy = rho_dist.entropy() + alpha_dist.entropy() + slope_dist.entropy()
+                        entropy = prior_entropy - entropy
                     design = results["d_star_design"]
                     y = results['y']
                     parameters = torch.cat(
@@ -141,14 +165,14 @@ def main(fnames, findices, plot, percentile):
             plt.figure(figsize=(5, 5))
             print(reformed[statistic].keys())
             for i, k in enumerate(reformed[statistic]):
-                e = reformed[statistic][k].squeeze()[:-1]
+                e = reformed[statistic][k].squeeze()  # [:-1]
                 lower, centre, upper = upper_lower(e, percentile=percentile)
+                # centre = np.mean(e, axis=1)
+                # std = np.std(e, axis=1)
+                # upper = centre + std
+                # lower = centre - std
                 if statistic == "Entropy":
                     print(lower, centre, upper)
-                centre = np.mean(e, axis=1)
-                std = np.std(e, axis=1)
-                upper = centre + std
-                lower = centre - std
                 x = np.arange(1, e.shape[0] + 1)
                 plt.plot(x, centre, linestyle='-', markersize=12,
                          color=COLOURS[k], marker=MARKERS[k], label=LABELS[k],
@@ -160,10 +184,11 @@ def main(fnames, findices, plot, percentile):
             plt.yticks(fontsize=23)
             plt.ylabel(VALUE_LABELS[statistic], fontsize=23)
             plt.legend()
+            plt.grid(True)
 
             if statistic not in ["Entropy", "Imax"]:
                 plt.yscale('log')
-            # plt.show()
+            plt.show()
 
         # fig = plt.figure(figsize=(8, 6))
         # fig.clear()
@@ -187,8 +212,8 @@ def main(fnames, findices, plot, percentile):
         fig = plt.figure(figsize=(24, 16))
         fig.clear()
         dist_dict = {"rho_dist": torch.distributions.Beta,
-                 "alpha_dist": torch.distributions.Dirichlet,
-                 "u_dist": torch.distributions.LogNormal}
+                     "alpha_dist": torch.distributions.Dirichlet,
+                     "u_dist": torch.distributions.LogNormal}
         param_names = ['rho', 'alpha_0', 'alpha_1', 'alpha_2',
                        'u']
         param_truths = [0.9, 0.2, 0.3, 0.5, 10]
@@ -237,6 +262,7 @@ def main(fnames, findices, plot, percentile):
         fig.legend()
         fig.suptitle("Means")
         fig.show()
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Sigmoid iterated experiment design results parser")

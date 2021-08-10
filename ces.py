@@ -1,29 +1,31 @@
-import torch
-from torch.distributions import transform_to
 import argparse
-import subprocess
 import datetime
-import pickle
-import time
-import os
-from functools import partial
-from contextlib import ExitStack
+import joblib
 import logging
-
+from torch.distributions import transform_to
+import os
+import pickle
 import pyro
-import pyro.optim as optim
-import pyro.distributions as dist
-from pyro.contrib.util import iter_plates_to_shape, lexpand, rexpand, rmv
-from pyro.contrib.oed.eig import marginal_eig, elbo_learn, nmc_eig, pce_eig
 import pyro.contrib.gp as gp
-from pyro.contrib.oed.differentiable_eig import _differentiable_posterior_loss, differentiable_pce_eig, \
-    _differentiable_ace_eig_loss
-from pyro.contrib.oed.eig import opt_eig_ape_loss
-from pyro.util import is_bad
+import pyro.distributions as dist
+import pyro.optim as optim
+import subprocess
+import time
+import torch
 
 from ces_gradients import PosteriorGuide, LinearPosteriorGuide
+from contextlib import ExitStack
+from functools import partial
+from pyro.contrib.oed.eig import marginal_eig, elbo_learn, nmc_eig, pce_eig, \
+    opt_eig_ape_loss
+from pyro.contrib.oed.differentiable_eig import _differentiable_posterior_loss, \
+    differentiable_pce_eig, _differentiable_ace_eig_loss
+from pyro.contrib.util import iter_plates_to_shape, lexpand, rexpand, rmv
+from pyro.util import is_bad
 
 # TODO read from torch float spec
+if torch.cuda.is_available():
+    torch.set_default_tensor_type('torch.cuda.FloatTensor')
 epsilon = torch.tensor(2 ** -22)
 
 
@@ -119,8 +121,9 @@ def neg_loss(loss):
     return new_loss
 
 
-def main(num_steps, num_parallel, experiment_name, typs, seed, lengthscale, num_gradient_steps, num_samples,
-         num_contrast_samples, num_acquisition, obs_sd, loglevel):
+def main(num_steps, num_parallel, experiment_name, typs, seed, lengthscale,
+         num_gradient_steps, num_samples, num_contrast_samples, num_acquisition,
+         obs_sd, loglevel, policy_src, estimate_eig):
     numeric_level = getattr(logging, loglevel.upper(), None)
     if not isinstance(numeric_level, int):
         raise ValueError("Invalid log level: {}".format(loglevel))
@@ -164,6 +167,13 @@ def main(num_steps, num_parallel, experiment_name, typs, seed, lengthscale, num_
                                                    observation_sd),
                                     {"rho": torch.tensor([.9, .1]), "alpha": torch.tensor([.2, .3, .5]),
                                      "slope": torch.tensor(10.)})
+        if estimate_eig:
+            print("estimate_eig")
+            data = joblib.load(policy_src)
+            eval_env = data['env'].env.env
+            eval_env.l = int(1e4)
+            eval_env.reset(n_parallel=eval_env.n_parallel)
+            spce = 0
 
         d_star_designs = torch.tensor([])
         ys = torch.tensor([])
@@ -314,28 +324,58 @@ def main(num_steps, num_parallel, experiment_name, typs, seed, lengthscale, num_
                 d_star_design = .01 + 99.99 * torch.rand((num_parallel, 1, 1, design_dim))
                 d_star_design = lexpand(d_star_design[0], num_parallel)
 
+            elif typ == "policy":
+                if step == 0:
+                    data = joblib.load(policy_src)
+                    algo, env = data['algo'], data['env']
+                    pi, qf1, qf2 = algo.policy, algo._qf1, algo._qf2
+                    norm_env = env.env
+                    o_lb = norm_env.observation_space.low
+                    o_ub = norm_env.observation_space.high
+                    norm_obs = env.reset(n_parallel=num_parallel)
+                else:
+                    obs = torch.cat(
+                        [
+                            d_star_designs.squeeze(dim=-3),
+                            torch.transpose(ys, 1, 2)
+                        ],
+                        dim=-1
+                    )
+                    norm_obs = (obs - o_lb) / (o_ub - o_lb)
+                act = pi.get_actions(norm_obs)[-1]['mean'].reshape(
+                    num_parallel, 1, 1, design_dim)
+                tiled_obs = norm_obs.unsqueeze(0).repeat(100, 1, 1, 1)
+                # act = pi.get_actions(tiled_obs)[0]
+                # max_q = torch.min(
+                #     qf1(tiled_obs, act), qf2(tiled_obs, act)
+                # ).squeeze().argmax(dim=0)
+                # act = act[max_q, torch.arange(len(max_q))].reshape(
+                #     num_parallel, 1, 1, design_dim)
+                lb, ub = norm_env.action_space.low, norm_env.action_space.high
+                denorm_act = lb + (act + 1) * 0.5 * (ub - lb)
+                d_star_design = torch.tensor(denorm_act)
+
             elif typ == 'const':
-                # import numpy as np
-                # rl_data = np.load("/home/bla363/boed/Experiments/data/local/experiment/sac_ces_452/posteriors.npz")
-                # design_array = torch.tensor(rl_data['denormalised_designs'])
+                import numpy as np
+                rl_data = np.load("/home/bla363/boed/Experiments/data/local/experiment/sac_ces_654/posteriors.npz")
+                design_array = torch.tensor(rl_data['denormalised_designs'])
                 # y_array = torch.tensor(rl_data['ys'])
 
-                design_array = []
-                y_array = []
-                rng_array = []
-                with open("/home/bla363/boed/run_outputs/ces/repr-pce-grad-1.result_stream.pickle", 'rb') as f:
-                    try:
-                        while True:
-                            data = pickle.load(f)
-                            design_array.append(data['d_star_design'])
-                            y_array.append(data['y'])
-                            # rng_array.append(data['rng_state'])
-                    except EOFError:
-                        pass
-                # torch.set_rng_state(rng_array[step])
+                # design_array = []
+                # y_array = []
+                # rng_array = []
+                # with open("/home/bla363/boed/run_outputs/ces/repr-pce-grad-1.result_stream.pickle", 'rb') as f:
+                #     try:
+                #         while True:
+                #             data = pickle.load(f)
+                #             design_array.append(data['d_star_design'])
+                #             y_array.append(data['y'])
+                #             # rng_array.append(data['rng_state'])
+                #     except EOFError:
+                #         pass
+                # # torch.set_rng_state(rng_array[step])
 
                 d_star_design = lexpand(design_array[step][0], num_parallel)
-
 
             results['rng_state'] = torch.get_rng_state()
             # update using only the result of the first experiment
@@ -356,10 +396,19 @@ def main(num_steps, num_parallel, experiment_name, typs, seed, lengthscale, num_
             results['design_time'] = elapsed
             results['d_star_design'] = d_star_design
             logging.info('design {} {}'.format(d_star_design.squeeze(), d_star_design.shape))
-            d_star_design = lexpand(d_star_design[0], num_parallel)
+            # d_star_design = lexpand(d_star_design[0], num_parallel)
             d_star_designs = torch.cat([d_star_designs, d_star_design], dim=-2)
             # pyro.set_rng_seed(10)
-            y = true_model(d_star_design)
+            if estimate_eig:
+                y = eval_env.model.run_experiment(d_star_design, eval_env.theta0)
+                spce += eval_env.get_reward(y, d_star_design)
+                results['spce'] = spce
+                if step == 0:
+                    results['theta0'] = {
+                        k: v.cpu() for k, v in eval_env.theta0.items()}
+                logging.info(f"spce {spce} {spce.shape}")
+            else:
+                y = true_model(d_star_design)
             # if typ == 'const':
             #     y = y * 0 + lexpand(y_array[step][0], num_parallel)
             ys = torch.cat([ys, y], dim=-1)
@@ -402,6 +451,9 @@ def main(num_steps, num_parallel, experiment_name, typs, seed, lengthscale, num_
                 rho_concentration.squeeze(), alpha_concentration.squeeze(), slope_mu.squeeze(), slope_sigma.squeeze()))
             results['rho_concentration'], results['alpha_concentration'] = rho_concentration, alpha_concentration
             results['slope_mu'], results['slope_sigma'] = slope_mu, slope_sigma
+            for k, v in results.items():
+                if hasattr(v, "cpu"):
+                    results[k] = v.cpu()
 
             with open(results_file, 'ab') as f:
                 pickle.dump(results, f)
@@ -422,7 +474,11 @@ if __name__ == "__main__":
     parser.add_argument("--num-contrast-samples", default=10, type=int)
     parser.add_argument("--num-acquisition", default=8, type=int)
     parser.add_argument("--observation-sd", default=0.005, type=float)
+    parser.add_argument("--policy-src", default="", type=str)
+    parser.add_argument("--estimate-eig", dest="estimate_eig",
+                        action='store_true')
+    parser.set_defaults(estimate_eig=False)
     args = parser.parse_args()
     main(args.num_steps, args.num_parallel, args.name, args.typs, args.seed, args.lengthscale,
          args.num_gradient_steps, args.num_samples, args.num_contrast_samples, args.num_acquisition,
-         args.observation_sd, args.loglevel)
+         args.observation_sd, args.loglevel, args.policy_src, args.estimate_eig)
