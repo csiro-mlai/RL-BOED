@@ -1,17 +1,19 @@
+"""
+Use SAC to learn an agent that adaptively designs source location experiments
+"""
 import argparse
 
 import joblib
 import torch
-import pyro
 import numpy as np
 
 from garage.experiment import deterministic
 from garage.torch import set_gpu_mode
-from pyro import wrap_experiment
+from pyro import wrap_experiment, set_rng_seed
 from pyro.algos import SAC
-from pyro.envs import AdaptiveDesignEnv, GarageEnv, normalize
+from pyro.envs import AdaptiveDesignEnv, GymEnv, normalize
 from pyro.envs.adaptive_design_env import LOWER, UPPER, TERMINAL
-from pyro.experiment import LocalRunner
+from pyro.experiment import Trainer
 from pyro.models.adaptive_experiment_model import SourceModel
 from pyro.policies.adaptive_tanh_gaussian_policy import \
     AdaptiveTanhGaussianPolicy
@@ -42,7 +44,7 @@ def main(n_parallel=1, budget=1, n_rl_itr=1, n_cont_samples=10, seed=0,
             set_gpu_mode(False)
             print("\nno GPU detected\n")
         deterministic.set_seed(seed)
-        pyro.set_rng_seed(seed)
+        set_rng_seed(seed)
         if src_filepath:
             print(f"loading data from {src_filepath}")
             data = joblib.load(src_filepath)
@@ -62,7 +64,7 @@ def main(n_parallel=1, budget=1, n_rl_itr=1, n_cont_samples=10, seed=0,
 
             def make_env(design_space, obs_space, model, budget, n_cont_samples,
                          bound_type, true_model=None):
-                env = GarageEnv(
+                env = GymEnv(
                     normalize(
                         AdaptiveDesignEnv(
                             design_space, obs_space, model, budget,
@@ -105,30 +107,30 @@ def main(n_parallel=1, budget=1, n_rl_itr=1, n_cont_samples=10, seed=0,
             policy = make_policy()
             qf1 = make_q_func()
             qf2 = make_q_func()
-
             replay_buffer = PathBuffer(capacity_in_transitions=int(1e6))
+            sampler = LocalSampler(agents=policy, envs=env,
+                                   max_episode_length=budget,
+                                   worker_class=VectorWorker)
 
             sac = SAC(env_spec=env.spec,
                       policy=policy,
                       qf1=qf1,
                       qf2=qf2,
-                      gradient_steps_per_itr=64,
-                      max_path_length=budget,
                       replay_buffer=replay_buffer,
-                      min_buffer_size=1e4,
+                      sampler=sampler,
+                      max_episode_length_eval=budget,
+                      gradient_steps_per_itr=64,
+                      min_buffer_size=int(1e3),
                       target_update_tau=5e-3,
                       discount=discount,
                       fixed_alpha=alpha,
                       buffer_batch_size=4096,
-                      reward_scale=1.,
-                      steps_per_epoch=1,
-                      num_evaluation_trajectories=n_parallel,)
+                      reward_scale=1.,)
 
         sac.to()
-        runner = LocalRunner(snapshot_config=ctxt)
-        runner.setup(algo=sac, env=env, sampler_cls=LocalSampler,
-                     worker_class=VectorWorker)
-        runner.train(n_epochs=n_rl_itr, batch_size=n_parallel * budget)
+        trainer = Trainer(snapshot_config=ctxt)
+        trainer.setup(algo=sac, env=env)
+        trainer.train(n_epochs=n_rl_itr, batch_size=n_parallel * budget)
 
     sac_source(n_parallel=n_parallel, budget=budget, n_rl_itr=n_rl_itr,
                n_cont_samples=n_cont_samples, seed=seed,
