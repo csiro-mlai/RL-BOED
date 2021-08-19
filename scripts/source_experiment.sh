@@ -7,5 +7,4 @@
 #SBATCH --gres=gpu:1
 
 source start.sh
-
-python /home/bla363/bla363/boed/Experiments/Adaptive_Source_SAC.py --n-contr-samples=100000 --n-rl-itr=20001 --log-dir=/flush5/bla363/source  --bound-type=lower --id=1 --budget=30 --discount=1 --src-filepath="/flush5/bla363/source_25/itr_10000.pkl" --alpha=0
+python ~/boed/Experiments/Adaptive_Source_SAC.py --n-contr-samples=100000 --n-rl-itr=20001 --log-dir=$FLUSHDIR/source  --bound-type=lower --id=1 --budget=30 --discount=1  --alpha=0
