@@ -218,7 +218,8 @@ class SAC(RLAlgorithm):
                 allact = torch.cat(
                     [path["actions"] for path in trainer.step_episode]
                 ).cpu().numpy()
-                self.episode_rewards.append(np.mean(path_returns))
+                self.episode_rewards.append(
+                    torch.stack(path_returns).mean().cpu().numpy())
                 for _ in range(self._gradient_steps):
                     policy_loss, qf1_loss, qf2_loss = self.train_once()
             last_return = self._evaluate_policy(trainer.step_itr)
