@@ -6,7 +6,7 @@ import numpy as np
 import torch
 
 from collections import defaultdict
-from garage.misc import tensor_utils
+from garage.np import truncate_tensor_dict
 from torch.nn.functional import pad
 
 
@@ -68,7 +68,7 @@ def rollout(env,
     agent_infos = defaultdict(list)
     env_infos = defaultdict(list)
     dones = []
-    o = env.reset(n_parallel=n_parallel)
+    o, _ = env.reset(n_parallel=n_parallel)
     agent.reset()
     path_length = 0
     if animated:
@@ -78,7 +78,10 @@ def rollout(env,
         if deterministic and 'mean' in agent_info:
             a = agent_info['mean']
         a_shape = (n_parallel,) + env.action_space.shape[1:]
-        next_o, r, d, env_info = env.step(a.reshape(a_shape))
+        env_step = env.step(a.reshape(a_shape))
+        next_o, r = env_step.observation, env_step.reward
+        d, env_info = env_step.terminal, env_step.env_info
+        d = d * torch.ones_like(r)
         o = pad(o, (0, 0, 0, max_path_length - path_length, 0, 0))
         observations.append(o)
         rewards.append(r)
@@ -92,7 +95,7 @@ def rollout(env,
                 env_infos[k].append([v] * n_parallel)
         dones.append(d)
         path_length += 1
-        if d.any():
+        if env_step.terminal:
             break
         o = next_o
         if animated:
@@ -166,7 +169,7 @@ def truncate_paths(paths, max_samples):
             if k in ['observations', 'actions', 'rewards']:
                 truncated_last_path[k] = v[:truncated_len]
             elif k in ['env_infos', 'agent_infos']:
-                truncated_last_path[k] = tensor_utils.truncate_tensor_dict(
+                truncated_last_path[k] = truncate_tensor_dict(
                     v, truncated_len)
             else:
                 raise ValueError(

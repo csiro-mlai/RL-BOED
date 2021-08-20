@@ -8,5 +8,5 @@ graphviz~=0.15
 scipy~=1.5.4
 setuptools~=50.3.2
 matplotlib~=3.3.3
-garage==2020.6.3
+garage==2021.3.0
 dowel==0.0.3

@@ -1,6 +1,5 @@
 """Experiment functions."""
-from pyro.experiment.local_runner import LocalRunner
-
+from pyro.experiment.trainer import Trainer
 __all__ = [
-    'LocalRunner',
+    "Trainer",
 ]

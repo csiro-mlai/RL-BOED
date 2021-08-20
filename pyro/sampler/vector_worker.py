@@ -3,7 +3,7 @@
  environments."""
 from collections import defaultdict
 
-from pyro import TrajectoryBatch
+from pyro import EpisodeBatch
 from garage.sampler.default_worker import DefaultWorker
 
 import torch
@@ -14,15 +14,19 @@ class VectorWorker(DefaultWorker):
             self,
             *,  # Require passing by keyword, since everything's an int.
             seed,
-            max_path_length,
+            max_episode_length,
             worker_number):
         super().__init__(seed=seed,
-                         max_path_length=max_path_length,
+                         max_episode_length=max_episode_length,
                          worker_number=worker_number)
         self._n_parallel = None
         self._prev_mask = None
         self._masks = []
         self._last_masks = []
+        self._rewards = []
+        self._actions = []
+        self._terminals = []
+        self._env_infos = defaultdict(list)
 
     def update_env(self, env_update):
         super().update_env(env_update)
@@ -30,7 +34,7 @@ class VectorWorker(DefaultWorker):
 
     def pad_observation(self, obs):
         pad_shape = list(obs.shape)
-        pad_shape[1] = self._max_path_length - pad_shape[1]
+        pad_shape[1] = self._max_episode_length - pad_shape[1]
         pad = torch.zeros(pad_shape)
         padded_obs = torch.cat([obs, pad], dim=1)
         mask = torch.cat([torch.ones_like(obs), pad], dim=1)[..., :1]
@@ -40,7 +44,7 @@ class VectorWorker(DefaultWorker):
     def start_rollout(self):
         """Begin a new rollout."""
         self._path_length = 0
-        self._prev_obs = self.env.reset(n_parallel=self._n_parallel)
+        self._prev_obs, _ = self.env.reset(n_parallel=self._n_parallel)
         self._prev_obs, self._prev_mask = self.pad_observation(self._prev_obs)
         self.agent.reset()
 
@@ -49,15 +53,17 @@ class VectorWorker(DefaultWorker):
 
         Returns:
             bool: True iff the path is done, either due to the environment
-            indicating termination or due to reaching `max_path_length`.
+            indicating termination or due to reaching `max_episode_length`.
         """
-        if self._path_length < self._max_path_length:
+        if self._path_length < self._max_episode_length:
             a, agent_info = self.agent.get_actions(
                 self._prev_obs, self._prev_mask)
             if deterministic and 'mean' in agent_info:
                 a = agent_info['mean']
             a_shape = (self._n_parallel,) + self.env.action_space.shape[1:]
-            next_o, r, d, env_info = self.env.step(a.reshape(a_shape))
+            env_step = self.env.step(a.reshape(a_shape))
+            next_o, r = env_step.observation, env_step.reward
+            d, env_info = env_step.terminal, env_step.env_info
             self._observations.append(self._prev_obs)
             self._rewards.append(r)
             self._actions.append(a)
@@ -67,8 +73,9 @@ class VectorWorker(DefaultWorker):
                 self._env_infos[k].append(v)
             self._masks.append(self._prev_mask)
             self._path_length += 1
-            self._terminals.append(d.float())
-            if not d.all():
+            # TODO: make sure we want to use step_Type and not simply booleans
+            self._terminals.append(d * torch.ones_like(r))
+            if not env_step.terminal:
                 next_o, next_mask = self.pad_observation(next_o)
                 self._prev_obs = next_o
                 self._prev_mask = next_mask
@@ -84,7 +91,7 @@ class VectorWorker(DefaultWorker):
         rollouts, and clear the internal buffer
 
         Returns:
-            garage.TrajectoryBatch: A batch of the trajectories completed since
+            garage.EpisodeBatch: A batch of the episodes completed since
                 the last call to collect_rollout().
         """
         observations = torch.cat(
@@ -139,15 +146,17 @@ class VectorWorker(DefaultWorker):
                 ).squeeze(0)
         lengths = self._lengths
         self._lengths = []
-        return TrajectoryBatch(self.env.spec, observations, last_observations,
-                               masks, last_masks, actions, rewards, terminals,
-                               dict(env_infos), dict(agent_infos), lengths)
+        episode_infos = dict()
+        return EpisodeBatch(self.env.spec, episode_infos, observations,
+                            last_observations, masks, last_masks, actions,
+                            rewards, dict(env_infos), dict(agent_infos),
+                            terminals, lengths)
 
     def rollout(self, deterministic=False):
         """Sample a single vectorised rollout of the agent in the environment.
 
         Returns:
-            garage.TrajectoryBatch: The collected trajectory.
+            garage.EpisodeBath: The collected trajectory.
 
         """
         self.start_rollout()
