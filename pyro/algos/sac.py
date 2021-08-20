@@ -1,4 +1,5 @@
 """This modules creates a sac model in PyTorch."""
+# yapf: disable
 from collections import deque
 import copy
 
@@ -7,11 +8,13 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 import time
-from garage.np.algos import RLAlgorithm
-from garage.sampler import OffPolicyVectorizedSampler
-from garage.torch import global_device
+
 from pyro import log_performance
-from pyro.algos._functions import obtain_evaluation_samples
+from pyro.algos._functions import obtain_evaluation_episodes
+from garage.np.algos import RLAlgorithm
+from garage.torch import as_torch_dict, global_device
+
+# yapf: enable
 
 
 class SAC(RLAlgorithm):
@@ -39,14 +42,14 @@ class SAC(RLAlgorithm):
         qf2 (garage.torch.q_function.ContinuousMLPQFunction): QFunction/Critic
             used for actor/policy optimization. See Soft Actor-Critic and
             Applications.
-        replay_buffer (garage.replay_buffer.ReplayBuffer): Stores transitions
-            that are previously collected by the sampler.
-        env_spec (garage.envs.env_spec.EnvSpec): The env_spec attribute of the
-            environment that the agent is being trained in. Usually accessable
-            by calling env.spec.
-        max_path_length (int): Max path length of the environment.
-        max_eval_path_length (int or None): Maximum length of paths used for
-            off-policy evaluation. If None, defaults to `max_path_length`.
+        replay_buffer (ReplayBuffer): Stores transitions that are previously
+            collected by the sampler.
+        sampler (garage.sampler.Sampler): Sampler.
+        env_spec (EnvSpec): The env_spec attribute of the environment that the
+            agent is being trained in.
+        max_episode_length_eval (int or None): Maximum length of episodes used
+            for off-policy evaluation. If None, defaults to
+            `env_spec.max_episode_length`.
         gradient_steps_per_itr (int): Number of optimization steps that should
         gradient_steps_per_itr(int): Number of optimization steps that should
             occur before the training step is over and a new batch of
@@ -76,11 +79,12 @@ class SAC(RLAlgorithm):
             policy/actor, q_functions/critics, and temperature/entropy
             optimizations.
         steps_per_epoch (int): Number of train_once calls per epoch.
-        num_evaluation_trajectories (int): The number of evaluation
-            trajectories used for computing eval stats at the end of every
-            epoch.
-        eval_env (garage.envs.GarageEnv): environment used for collecting
-            evaluation trajectories. If None, a copy of the train env is used.
+        num_evaluation_episodes (int): The number of evaluation episodes used
+            for computing eval stats at the end of every epoch.
+        eval_env (Environment): environment used for collecting evaluation
+            episodes. If None, a copy of the train env is used.
+        use_deterministic_evaluation (bool): True if the trained policy
+            should be evaluated deterministically.
 
     """
 
@@ -91,9 +95,9 @@ class SAC(RLAlgorithm):
             qf1,
             qf2,
             replay_buffer,
+            sampler,
             *,  # Everything after this is numbers.
-            max_path_length,
-            max_eval_path_length=None,
+            max_episode_length_eval=None,
             gradient_steps_per_itr,
             fixed_alpha=None,
             target_entropy=None,
@@ -107,8 +111,9 @@ class SAC(RLAlgorithm):
             reward_scale=1.0,
             optimizer=torch.optim.Adam,
             steps_per_epoch=1,
-            num_evaluation_trajectories=10,
-            eval_env=None):
+            num_evaluation_episodes=10,
+            eval_env=None,
+            use_deterministic_evaluation=True):
 
         self._qf1 = qf1
         self._qf2 = qf2
@@ -119,7 +124,7 @@ class SAC(RLAlgorithm):
         self._initial_log_entropy = initial_log_entropy
         self._gradient_steps = gradient_steps_per_itr
         self._optimizer = optimizer
-        self._num_evaluation_trajectories = num_evaluation_trajectories
+        self._num_evaluation_episodes = num_evaluation_episodes
         self._eval_env = eval_env
 
         self._min_buffer_size = min_buffer_size
@@ -127,16 +132,18 @@ class SAC(RLAlgorithm):
         self._buffer_batch_size = buffer_batch_size
         self._discount = discount
         self._reward_scale = reward_scale
-        self.max_path_length = max_path_length
-        self._max_eval_path_length = (max_eval_path_length or max_path_length)
+        self.max_episode_length = env_spec.max_episode_length
+        self._max_episode_length_eval = env_spec.max_episode_length
 
-        # used by OffPolicyVectorizedSampler
+        if max_episode_length_eval is not None:
+            self._max_episode_length_eval = max_episode_length_eval
+        self._use_deterministic_evaluation = use_deterministic_evaluation
+
         self.policy = policy
         self.env_spec = env_spec
         self.replay_buffer = replay_buffer
-        self.exploration_policy = None
 
-        self.sampler_cls = OffPolicyVectorizedSampler
+        self._sampler = sampler
 
         self._reward_scale = reward_scale
         # use 2 target q networks
@@ -165,12 +172,12 @@ class SAC(RLAlgorithm):
             self._log_alpha = torch.Tensor([self._fixed_alpha]).log()
         self.episode_rewards = deque(maxlen=30)
 
-    def train(self, runner):
+    def train(self, trainer):
         """Obtain samplers and start actual training for each epoch.
 
         Args:
-            runner (LocalRunner): LocalRunner is passed to give algorithm
-                the access to runner.step_epochs(), which provides services
+            trainer (Trainer): Gives the algorithm the access to
+                :method:`~Trainer.step_epochs()`, which provides services
                 such as snapshotting and sampler control.
 
         Returns:
@@ -178,65 +185,46 @@ class SAC(RLAlgorithm):
 
         """
         if not self._eval_env:
-            self._eval_env = runner.get_env_copy()
+            self._eval_env = trainer.get_env_copy()
         last_return = None
-        for idx in runner.step_epochs():
+        for _ in trainer.step_epochs():
             for _ in range(self._steps_per_epoch):
                 if not (self.replay_buffer.n_transitions_stored >=
                         self._min_buffer_size):
                     batch_size = int(self._min_buffer_size)
                 else:
                     batch_size = None
-                t0 = time.time()
-                runner.step_path = runner.obtain_samples(
-                    runner.step_itr, batch_size)
-                t1 = time.time()
-                print(f"time = {t1 - t0}s")
+                trainer.step_episode = trainer.obtain_samples(
+                    trainer.step_itr, batch_size)
                 path_returns = []
-                for path in runner.step_path:
+                for path in trainer.step_episode:
                     self.replay_buffer.add_path(
                         dict(observation=path['observations'],
                              action=path['actions'],
                              reward=path['rewards'].reshape(-1, 1),
                              next_observation=path['next_observations'],
-                             terminal=path['dones'].reshape(-1, 1),
-                             mask=path['masks'],
-                             next_mask=path['next_masks'], ))
+                             terminal=path['step_types'].reshape(-1, 1)))
                     path_returns.append(sum(path['rewards']))
-                assert len(path_returns) == len(runner.step_path)
+                assert len(path_returns) == len(trainer.step_episode)
                 allrets = torch.tensor(
-                    [path["rewards"].sum() for path in runner.step_path]
+                    [path["rewards"].sum() for path in trainer.step_episode]
                 ).cpu().numpy()
                 mean_std = torch.stack(
-                    [p["agent_infos"]["log_std"] for p in runner.step_path]
+                    [p["agent_infos"]["log_std"] for p in trainer.step_episode]
                 ).exp().mean(dim=(0, 1)).cpu().numpy()
                 mean_mean = torch.stack(
-                        [p["agent_infos"]["mean"] for p in runner.step_path]
+                    [p["agent_infos"]["mean"] for p in trainer.step_episode]
                 ).mean(dim=(0, 1)).cpu().numpy()
                 allact = torch.cat(
-                    [path["actions"] for path in runner.step_path]
+                    [path["actions"] for path in trainer.step_episode]
                 ).cpu().numpy()
-                # ys = self._eval_env.true_model(
-                #     torch.tensor(
-                #         (allact + 1) * 99.99 / 2 + .01).reshape(-1, 1, 1, 6)
-                # )
-                # unclipped = ((ys > 2 ** -22) * (ys < 1 - 2 ** -22)).sum()
                 self.episode_rewards.append(
                     torch.stack(path_returns).mean().cpu().numpy())
-                t0 = time.time()
                 for _ in range(self._gradient_steps):
                     policy_loss, qf1_loss, qf2_loss = self.train_once()
-                t1 = time.time()
-                print(f"time = {t1 - t0}s")
-            # if idx > 0:
-            #     self._target_entropy *= np.exp(np.log(2) / 20000)
-            print(f"entropy = {self._target_entropy}")
-            t0 = time.time()
-            last_return = self._evaluate_policy(runner.step_itr)
-            t1 = time.time()
-            print(f"time = {t1 - t0}s")
+            last_return = self._evaluate_policy(trainer.step_itr)
             self._log_statistics(policy_loss, qf1_loss, qf2_loss)
-            tabular.record('TotalEnvSteps', runner.total_env_steps)
+            tabular.record('TotalEnvSteps', trainer.total_env_steps)
             tabular.record('Return/MedianReturn', np.median(allrets))
             tabular.record('Return/LowerQuartileReturn',
                            np.percentile(allrets, 25))
@@ -250,8 +238,8 @@ class SAC(RLAlgorithm):
             tabular.record("Policy/Mean", mean_mean)
             tabular.record("Action/MeanAction", allact.mean(axis=0))
             tabular.record("Action/StdAction", allact.std(axis=0))
-            # tabular.record("Action/Unclipped", unclipped.item())
-            runner.step_itr += 1
+            trainer.step_itr += 1
+
         return np.mean(last_return)
 
     def train_once(self, itr=None, paths=None):
@@ -273,6 +261,7 @@ class SAC(RLAlgorithm):
         if self.replay_buffer.n_transitions_stored >= self._min_buffer_size:
             samples = self.replay_buffer.sample_transitions(
                 self._buffer_batch_size)
+            samples = as_torch_dict(samples)
             policy_loss, qf1_loss, qf2_loss = self.optimize_policy(samples)
             self._update_targets()
 
@@ -342,10 +331,10 @@ class SAC(RLAlgorithm):
             samples_data (dict): Transitions(S,A,R,S') that are sampled from
                 the replay buffer. It should have the keys 'observation',
                 'action', 'reward', 'terminal', and 'next_observations'.
-            new_actions(torch.Tensor): Actions resampled from the policy based
+            new_actions (torch.Tensor): Actions resampled from the policy based
                 based on the Observations, obs, which were sampled from the
                 replay buffer. Shape is (action_dim, buffer_batch_size).
-            log_pi_new_actions(torch.Tensor): Log probability of the new
+            log_pi_new_actions (torch.Tensor): Log probability of the new
                 actions on the TanhNormal distributions that they were sampled
                 from. Shape is (1, buffer_batch_size).
 
@@ -363,11 +352,10 @@ class SAC(RLAlgorithm):
 
         """
         obs = samples_data['observation']
-        mask = samples_data.get('mask')
         with torch.no_grad():
             alpha = self._get_log_alpha(samples_data).exp()
-        min_q_new_actions = torch.min(self._qf1(obs, new_actions, mask),
-                                      self._qf2(obs, new_actions, mask))
+        min_q_new_actions = torch.min(self._qf1(obs, new_actions),
+                                      self._qf2(obs, new_actions))
         policy_objective = ((alpha * log_pi_new_actions) -
                             min_q_new_actions.flatten()).mean()
         return policy_objective
@@ -399,27 +387,25 @@ class SAC(RLAlgorithm):
         rewards = samples_data['reward'].flatten()
         terminals = samples_data['terminal'].flatten()
         next_obs = samples_data['next_observation']
-        mask = samples_data.get('mask')
-        next_mask = samples_data.get('next_mask')
         with torch.no_grad():
             alpha = self._get_log_alpha(samples_data).exp()
 
-        q1_pred = self._qf1(obs, actions, mask)
-        q2_pred = self._qf2(obs, actions, mask)
+        q1_pred = self._qf1(obs, actions)
+        q2_pred = self._qf2(obs, actions)
 
-        new_next_actions_dist = self.policy(next_obs, next_mask)[0]
+        new_next_actions_dist = self.policy(next_obs)[0]
         new_next_actions_pre_tanh, new_next_actions = (
             new_next_actions_dist.rsample_with_pre_tanh_value())
         new_log_pi = new_next_actions_dist.log_prob(
             value=new_next_actions, pre_tanh_value=new_next_actions_pre_tanh)
 
         target_q_values = torch.min(
-            self._target_qf1(next_obs, new_next_actions, next_mask),
-            self._target_qf2(next_obs, new_next_actions, next_mask)
-        ).flatten() - (alpha * new_log_pi)
+            self._target_qf1(next_obs, new_next_actions),
+            self._target_qf2(
+                next_obs, new_next_actions)).flatten() - (alpha * new_log_pi)
         with torch.no_grad():
             q_target = rewards * self._reward_scale + (
-                    1. - terminals) * self._discount * target_q_values
+                1. - terminals) * self._discount * target_q_values
         qf1_loss = F.mse_loss(q1_pred.flatten(), q_target)
         qf2_loss = F.mse_loss(q2_pred.flatten(), q_target)
 
@@ -458,7 +444,6 @@ class SAC(RLAlgorithm):
 
         """
         obs = samples_data['observation']
-        mask = samples_data['mask']
         qf1_loss, qf2_loss = self._critic_objective(samples_data)
 
         self._qf1_optimizer.zero_grad()
@@ -469,7 +454,7 @@ class SAC(RLAlgorithm):
         qf2_loss.backward()
         self._qf2_optimizer.step()
 
-        action_dists = self.policy(obs, mask)[0]
+        action_dists = self.policy(obs)[0]
         new_actions_pre_tanh, new_actions = (
             action_dists.rsample_with_pre_tanh_value())
         log_pi_new_actions = action_dists.log_prob(
@@ -491,30 +476,28 @@ class SAC(RLAlgorithm):
 
         return policy_loss, qf1_loss, qf2_loss
 
-    def _evaluate_policy(self, epoch, policy=None):
-        """Evaluate the performance of the policy via deterministic rollouts.
+    def _evaluate_policy(self, epoch):
+        """Evaluate the performance of the policy via deterministic sampling.
 
             Statistics such as (average) discounted return and success rate are
             recorded.
 
         Args:
-            epoch(int): The current training epoch.
+            epoch (int): The current training epoch.
 
         Returns:
-            float: The average return across self._num_evaluation_trajectories
-                trajectories
+            float: The average return across self._num_evaluation_episodes
+                episodes
 
         """
-        if policy is None:
-            policy = self.policy
-        eval_trajectories = obtain_evaluation_samples(
-            policy,
+        eval_episodes = obtain_evaluation_episodes(
+            self.policy,
             self._eval_env,
-            max_path_length=self._max_eval_path_length,
-            num_trajs=self._num_evaluation_trajectories,
+            self._max_episode_length_eval,
+            num_eps=self._num_evaluation_episodes,
             n_parallel=self._eval_env.n_parallel)
         last_return = log_performance(epoch,
-                                      eval_trajectories,
+                                      eval_episodes,
                                       discount=self._discount)
         return last_return
 
@@ -522,9 +505,9 @@ class SAC(RLAlgorithm):
         """Record training statistics to dowel such as losses and returns.
 
         Args:
-            policy_loss(torch.Tensor): loss from actor/policy network.
-            qf1_loss(torch.Tensor): loss from 1st qf/critic network.
-            qf2_loss(torch.Tensor): loss from 2nd qf/critic network.
+            policy_loss (torch.Tensor): loss from actor/policy network.
+            qf1_loss (torch.Tensor): loss from 1st qf/critic network.
+            qf2_loss (torch.Tensor): loss from 2nd qf/critic network.
 
         """
         with torch.no_grad():
