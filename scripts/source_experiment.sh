@@ -6,5 +6,7 @@
 #SBATCH --ntasks-per-node=1
 #SBATCH --gres=gpu:1
 
-source start.sh
-python ~/boed/Experiments/Adaptive_Source_SAC.py --n-contr-samples=100000 --n-rl-itr=20001 --log-dir=$FLUSHDIR/source  --bound-type=lower --id=1 --budget=30 --discount=1  --alpha=0
+module load python/3.7.11
+source $FLUSHDIR/boed/bin/activate
+cd ~/boed
+python -m Experiments.Adaptive_Source_SAC --n-contr-samples=100000 --n-rl-itr=20001 --log-dir=$FLUSHDIR/boed_results/source  --bound-type=lower --id=1 --budget=30 --discount=1  --alpha=0
