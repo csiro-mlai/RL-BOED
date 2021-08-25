@@ -31,14 +31,16 @@ seeds = [373693, 943929, 675273, 79387, 508137, 557390, 756177, 155183, 262598,
 
 def main(n_parallel=1, budget=1, n_rl_itr=1, n_cont_samples=10, seed=0,
          log_dir=None, snapshot_mode='gap', snapshot_gap=500, bound_type=LOWER,
-         src_filepath=None, discount=1., alpha=None, k=2, d=2, log_info=None):
+         src_filepath=None, discount=1., alpha=None, k=2, d=2, log_info=None,
+         tau=5e-3, pi_lr=3e-4, qf_lr=3e-4, buffer_capacity=int(1e6)):
     if log_info is None:
         log_info = []
     @wrap_experiment(log_dir=log_dir, snapshot_mode=snapshot_mode,
                      snapshot_gap=snapshot_gap)
     def sac_source(ctxt=None, n_parallel=1, budget=1, n_rl_itr=1,
-                   n_cont_samples=10, seed=0, src_filepath=None,
-                   discount=1., alpha=None, k=2, d=2):
+                   n_cont_samples=10, seed=0, src_filepath=None, discount=1.,
+                   alpha=None, k=2, d=2, tau=5e-3, pi_lr=3e-4, qf_lr=3e-4,
+                   buffer_capacity=int(1e6)):
         if log_info:
             logger.log(str(log_info))
 
@@ -113,7 +115,7 @@ def main(n_parallel=1, budget=1, n_rl_itr=1, n_cont_samples=10, seed=0,
             policy = make_policy()
             qf1 = make_q_func()
             qf2 = make_q_func()
-            replay_buffer = PathBuffer(capacity_in_transitions=int(1e6))
+            replay_buffer = PathBuffer(capacity_in_transitions=buffer_capacity)
             sampler = LocalSampler(agents=policy, envs=env,
                                    max_episode_length=budget,
                                    worker_class=VectorWorker)
@@ -127,7 +129,9 @@ def main(n_parallel=1, budget=1, n_rl_itr=1, n_cont_samples=10, seed=0,
                       max_episode_length_eval=budget,
                       gradient_steps_per_itr=64,
                       min_buffer_size=int(1e3),
-                      target_update_tau=5e-3,
+                      target_update_tau=tau,
+                      policy_lr=pi_lr,
+                      qf_lr=qf_lr,
                       discount=discount,
                       fixed_alpha=alpha,
                       buffer_batch_size=4096,
@@ -140,9 +144,12 @@ def main(n_parallel=1, budget=1, n_rl_itr=1, n_cont_samples=10, seed=0,
 
     sac_source(n_parallel=n_parallel, budget=budget, n_rl_itr=n_rl_itr,
                n_cont_samples=n_cont_samples, seed=seed,
-               src_filepath=src_filepath, discount=discount, alpha=alpha, k=k, d=d)
+               src_filepath=src_filepath, discount=discount, alpha=alpha, k=k,
+               d=d, tau=tau, pi_lr=pi_lr, qf_lr=qf_lr,
+               buffer_capacity=buffer_capacity)
 
     logger.dump_all()
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -161,14 +168,20 @@ if __name__ == "__main__":
     parser.add_argument("--alpha", default="-1", type=float)
     parser.add_argument("--d", default="2", type=int)
     parser.add_argument("--k", default="2", type=int)
+    parser.add_argument("--tau", default="5e-3", type=float)
+    parser.add_argument("--pi-lr", default="3e-4", type=float)
+    parser.add_argument("--qf-lr", default="3e-4", type=float)
+    parser.add_argument("--buffer-capacity", default="1e6", type=int)
     args = parser.parse_args()
     bound_type_dict = {"lower": LOWER, "upper": UPPER, "terminal": TERMINAL}
     bound_type = bound_type_dict[args.bound_type]
     exp_id = args.id
     alpha = args.alpha if args.alpha >= 0 else None
+    log_info = f"input params: {vars(args)}"
     main(n_parallel=args.n_parallel, budget=args.budget, n_rl_itr=args.n_rl_itr,
          n_cont_samples=args.n_contr_samples, seed=seeds[exp_id - 1],
          log_dir=args.log_dir, snapshot_mode=args.snapshot_mode,
          snapshot_gap=args.snapshot_gap, bound_type=bound_type,
          src_filepath=args.src_filepath, discount=args.discount, alpha=alpha,
-         k=args.k, d=args.d, log_info = "input params: " + str(vars(args)))
+         k=args.k, d=args.d, log_info=log_info, tau=args.tau, pi_lr=args.pi_lr,
+         qf_lr=args.qf_lr, buffer_capacity=args.buffer_capacity)
