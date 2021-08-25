@@ -184,8 +184,6 @@ class SAC(RLAlgorithm):
             float: The average return in last epoch cycle.
 
         """
-        if not self._eval_env:
-            self._eval_env = trainer.get_env_copy()
         last_return = None
         for _ in trainer.step_epochs():
             for _ in range(self._steps_per_epoch):
@@ -222,7 +220,9 @@ class SAC(RLAlgorithm):
                     torch.stack(path_returns).mean().cpu().numpy())
                 for _ in range(self._gradient_steps):
                     policy_loss, qf1_loss, qf2_loss = self.train_once()
-            last_return = self._evaluate_policy(trainer.step_itr)
+            last_return = allrets
+            if self._eval_env is not None:
+                last_return = self._evaluate_policy(trainer.step_itr)
             self._log_statistics(policy_loss, qf1_loss, qf2_loss)
             tabular.record('TotalEnvSteps', trainer.total_env_steps)
             tabular.record('Return/MedianReturn', np.median(allrets))
