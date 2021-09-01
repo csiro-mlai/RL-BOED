@@ -22,7 +22,6 @@ class AdaptiveDesignEnv(Env):
         """
         self.action_space = design_space
         self.observation_space = history_space
-        self.obs_dims = history_space.low.ndim
         self.model = model
         self.n_parallel = model.n_parallel
         self.budget = budget
@@ -70,7 +69,7 @@ class AdaptiveDesignEnv(Env):
 
     def get_obs(self):
         if self.history:
-            return torch.stack(self.history, dim=-1-self.obs_dims)
+            return torch.stack(self.history, dim=-2)
         else:
             return torch.zeros(
                 (self.n_parallel, 0, self.observation_space.shape[-1]),

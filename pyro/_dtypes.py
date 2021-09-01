@@ -80,18 +80,18 @@ class TimeStep:
     Attributes:
         env_spec (EnvSpec): Specification for the environment from which this
             data was sampled.
-        episode_info (dict[str, np.ndarray]): A dict of numpy arrays of shape
+        episode_info (dict[str, torch.Tensor]): A dict of numpy arrays of shape
             :math:`(S*^,)` containing episode-level information of each
             episode.  For example, in goal-conditioned reinforcement learning
             this could contain the goal state for each episode.
-        observation (numpy.ndarray): A numpy array of shape :math:`(O^*)`
+        observation (torch.Tensor): A numpy array of shape :math:`(O^*)`
             containing the observation for this time step in the
             environment. These must conform to
             :obj:`EnvStep.observation_space`.
             The observation before applying the action.
             `None` if `step_type` is `StepType.FIRST`, i.e. at the start of a
             sequence.
-        action (numpy.ndarray): A numpy array of shape :math:`(A^*)`
+        action (torch.Tensor): A numpy array of shape :math:`(A^*)`
             containing the action for this time step. These must conform
             to :obj:`EnvStep.action_space`.
             `None` if `step_type` is `StepType.FIRST`, i.e. at the start of a
@@ -100,7 +100,7 @@ class TimeStep:
             given the observation, at this time step.
             `None` if `step_type` is `StepType.FIRST`, i.e. at the start of a
             sequence.
-        next_observation (numpy.ndarray): A numpy array of shape :math:`(O^*)`
+        next_observation (torch.Tensor): A numpy array of shape :math:`(O^*)`
             containing the observation for this time step in the
             environment. These must conform to
             :obj:`EnvStep.observation_space`.
@@ -116,13 +116,13 @@ class TimeStep:
     """
 
     env_spec: 'garage.EnvSpec'  # NOQA: F821
-    episode_info: Dict[str, np.ndarray]
-    observation: np.ndarray
-    action: np.ndarray
+    episode_info: Dict[str, torch.Tensor]
+    observation: torch.Tensor
+    action: torch.Tensor
     reward: float
-    next_observation: np.ndarray
-    env_info: Dict[str, np.ndarray]
-    agent_info: Dict[str, np.ndarray]
+    next_observation: torch.Tensor
+    env_info: Dict[str, torch.Tensor]
+    agent_info: Dict[str, torch.Tensor]
     step_type: StepType
 
     @property
@@ -158,7 +158,7 @@ class TimeStep:
 
         Args:
             env_step (EnvStep): the env step returned by the environment.
-            last_observation (numpy.ndarray): A numpy array of shape
+            last_observation (torch.Tensor): A numpy array of shape
                 :math:`(O^*)` containing the observation for this time
                 step in the environment. These must conform to
                 :attr:`EnvStep.observation_space`.
@@ -192,26 +192,26 @@ class TimeStepBatch:
     Attributes:
         env_spec (EnvSpec): Specification for the environment from
             which this data was sampled.
-        episode_infos (dict[str, np.ndarray]): A dict of numpy arrays
+        episode_infos (dict[str, torch.Tensor]): A dict of numpy arrays
             containing the episode-level information of each episode. Each
             value of this dict should be a numpy array of shape :math:`(N,
             S^*)`. For example, in goal-conditioned reinforcement learning this
             could contain the goal state for each episode.
-        observations (numpy.ndarray): Non-flattened array of observations.
+        observations (torch.Tensor): Non-flattened array of observations.
             Typically has shape (batch_size, S^*) (the unflattened state space
             of the current environment).
-        actions (numpy.ndarray): Non-flattened array of actions. Must
+        actions (torch.Tensor): Non-flattened array of actions. Must
             have shape (batch_size, S^*) (the unflattened action space of the
             current environment).
-        rewards (numpy.ndarray): Array of rewards of shape (batch_size, 1).
-        next_observation (numpy.ndarray): Non-flattened array of next
+        rewards (torch.Tensor): Array of rewards of shape (batch_size, 1).
+        next_observation (torch.Tensor): Non-flattened array of next
             observations. Has shape (batch_size, S^*). next_observations[i] was
             observed by the agent after taking actions[i].
         env_infos (dict): A dict arbitrary environment state
             information.
         agent_infos (dict): A dict of arbitrary agent state information. For
             example, this may contain the hidden states from an RNN policy.
-        step_types (numpy.ndarray): A numpy array of `StepType with shape (
+        step_types (torch.Tensor): A numpy array of `StepType with shape (
             batch_size,) containing the time step types for all transitions in
             this batch.
 
@@ -223,17 +223,17 @@ class TimeStepBatch:
 
     def __post_init__(self):
         """Runs integrity checking after __init__."""
-        check_timestep_batch(self, np.ndarray)
+        check_timestep_batch(self, torch.Tensor)
 
     env_spec: 'garage.EnvSpec'  # NOQA: F821
-    episode_infos: Dict[str, np.ndarray or dict]
-    observations: np.ndarray
-    actions: np.ndarray
-    rewards: np.ndarray
-    next_observations: np.ndarray
-    agent_infos: Dict[str, np.ndarray or dict]
-    env_infos: Dict[str, np.ndarray or dict]
-    step_types: np.ndarray
+    episode_infos: Dict[str, torch.Tensor or dict]
+    observations: torch.Tensor
+    actions: torch.Tensor
+    rewards: torch.Tensor
+    next_observations: torch.Tensor
+    agent_infos: Dict[str, torch.Tensor or dict]
+    env_infos: Dict[str, torch.Tensor or dict]
+    step_types: torch.Tensor
 
     @classmethod
     def concatenate(cls, *batches):
@@ -253,30 +253,30 @@ class TimeStepBatch:
             raise ValueError('Please provide at least one TimeStepBatch to '
                              'concatenate')
         episode_infos = {
-            k: np.concatenate([b.episode_infos[k] for b in batches])
+            k: torch.cat([b.episode_infos[k] for b in batches])
             for k in batches[0].episode_infos.keys()
         }
         env_infos = {
-            k: np.concatenate([b.env_infos[k] for b in batches])
+            k: torch.cat([b.env_infos[k] for b in batches])
             for k in batches[0].env_infos.keys()
         }
         agent_infos = {
-            k: np.concatenate([b.agent_infos[k] for b in batches])
+            k: torch.cat([b.agent_infos[k] for b in batches])
             for k in batches[0].agent_infos.keys()
         }
 
         return cls(
             env_spec=batches[0].env_spec,
             episode_infos=episode_infos,
-            observations=np.concatenate(
+            observations=torch.cat(
                 [batch.observations for batch in batches]),
-            actions=np.concatenate([batch.actions for batch in batches]),
-            rewards=np.concatenate([batch.rewards for batch in batches]),
-            next_observations=np.concatenate(
+            actions=torch.cat([batch.actions for batch in batches]),
+            rewards=torch.cat([batch.rewards for batch in batches]),
+            next_observations=torch.cat(
                 [batch.next_observations for batch in batches]),
             env_infos=env_infos,
             agent_infos=agent_infos,
-            step_types=np.concatenate([batch.step_types for batch in batches]))
+            step_types=torch.cat([batch.step_types for batch in batches]))
 
     def split(self) -> List['TimeStepBatch']:
         """Split a :class:`~TimeStepBatch` into a list of :class:`~TimeStepBatch`s.
@@ -293,27 +293,27 @@ class TimeStepBatch:
         for i in range(len(self.rewards)):
             time_step = TimeStepBatch(
                 episode_infos={
-                    k: np.asarray([v[i]])
+                    k: torch.as_tensor([v[i]])
                     for (k, v) in self.episode_infos.items()
                 },
                 env_spec=self.env_spec,
-                observations=np.asarray([self.observations[i]]),
-                actions=np.asarray([self.actions[i]]),
-                rewards=np.asarray([self.rewards[i]]),
-                next_observations=np.asarray([self.next_observations[i]]),
+                observations=torch.as_tensor([self.observations[i]]),
+                actions=torch.as_tensor([self.actions[i]]),
+                rewards=torch.as_tensor([self.rewards[i]]),
+                next_observations=torch.as_tensor([self.next_observations[i]]),
                 env_infos={
-                    k: np.asarray([v[i]])
+                    k: torch.as_tensor([v[i]])
                     for (k, v) in self.env_infos.items()
                 },
                 agent_infos={
-                    k: np.asarray([v[i]])
+                    k: torch.as_tensor([v[i]])
                     for (k, v) in self.agent_infos.items()
                 },
-                step_types=np.asarray([self.step_types[i]], dtype=StepType))
+                step_types=torch.as_tensor([self.step_types[i]]))
             time_steps.append(time_step)
         return time_steps
 
-    def to_time_step_list(self) -> List[Dict[str, np.ndarray]]:
+    def to_time_step_list(self) -> List[Dict[str, torch.Tensor]]:
         """Convert the batch into a list of dictionaries.
 
         Breaks the :class:`~TimeStepBatch` into a list of single time step
@@ -321,25 +321,25 @@ class TimeStepBatch:
         dictionaries are returned
 
         Returns:
-            list[dict[str, np.ndarray or dict[str, np.ndarray]]]: Keys:
-                episode_infos (dict[str, np.ndarray]): A dict of numpy arrays
+            list[dict[str, torch.Tensor or dict[str, torch.Tensor]]]: Keys:
+                episode_infos (dict[str, torch.Tensor]): A dict of numpy arrays
                     containing the episode-level information of each episode.
                     Each value of this dict must be a numpy array of shape
                     :math:`(S^*,)`. For example, in goal-conditioned
                     reinforcement learning this could contain the goal state
                     for each episode.
-                observations (numpy.ndarray): Non-flattened array of
+                observations (torch.Tensor): Non-flattened array of
                     observations.
                     Typically has shape (batch_size, S^*) (the unflattened
                     state space
                     of the current environment).
-                actions (numpy.ndarray): Non-flattened array of actions. Must
+                actions (torch.Tensor): Non-flattened array of actions. Must
                     have shape (batch_size, S^*) (the unflattened action
                     space of the
                     current environment).
-                rewards (numpy.ndarray): Array of rewards of shape (
+                rewards (torch.Tensor): Array of rewards of shape (
                     batch_size,) (1D array of length batch_size).
-                next_observation (numpy.ndarray): Non-flattened array of next
+                next_observation (torch.Tensor): Non-flattened array of next
                     observations. Has shape (batch_size, S^*).
                     next_observations[i] was
                     observed by the agent after taking actions[i].
@@ -348,7 +348,7 @@ class TimeStepBatch:
                 agent_infos (dict): A dict of arbitrary agent state
                     information. For example, this may contain the
                     hidden states from an RNN policy.
-                step_types (numpy.ndarray): A numpy array of `StepType with
+                step_types (torch.Tensor): A numpy array of `StepType with
                         shape (batch_size,) containing the time step types for
                         all transitions in this batch.
         """
@@ -356,25 +356,25 @@ class TimeStepBatch:
         for i in range(len(self.rewards)):
             samples.append({
                 'episode_infos': {
-                    k: np.asarray([v[i]])
+                    k: torch.as_tensor([v[i]])
                     for (k, v) in self.episode_infos.items()
                 },
                 'observations':
-                np.asarray([self.observations[i]]),
+                torch.as_tensor([self.observations[i]]),
                 'actions':
-                np.asarray([self.actions[i]]),
+                torch.as_tensor([self.actions[i]]),
                 'rewards':
-                np.asarray([self.rewards[i]]),
+                torch.as_tensor([self.rewards[i]]),
                 'next_observations':
-                np.asarray([self.next_observations[i]]),
+                torch.as_tensor([self.next_observations[i]]),
                 'env_infos':
-                {k: np.asarray([v[i]])
+                {k: torch.as_tensor([v[i]])
                  for (k, v) in self.env_infos.items()},
                 'agent_infos':
-                {k: np.asarray([v[i]])
+                {k: torch.as_tensor([v[i]])
                  for (k, v) in self.agent_infos.items()},
                 'step_types':
-                np.asarray([self.step_types[i]])
+                torch.as_tensor([self.step_types[i]])
             })
         return samples
 
@@ -383,11 +383,11 @@ class TimeStepBatch:
         """Get an array of boolean indicating ternianal information.
 
         Returns:
-            numpy.ndarray: An array of boolean of shape :math:`(N,)`
+            torch.Tensor: An array of boolean of shape :math:`(N,)`
                 indicating whether the `StepType is `TERMINAL
 
         """
-        return np.array([s == StepType.TERMINAL for s in self.step_types])
+        return self.step_types
 
     @classmethod
     def from_time_step_list(cls, env_spec, ts_samples):
@@ -396,24 +396,24 @@ class TimeStepBatch:
         Args:
             env_spec (EnvSpec): Specification for the environment from which
                 this data was sampled.
-            ts_samples (list[dict[str, np.ndarray or dict[str, np.ndarray]]]):
+            ts_samples (list[dict[str, torch.Tensor or dict[str, torch.Tensor]]]):
                 keys:
-                * episode_infos (dict[str, np.ndarray]): A dict of numpy arrays
+                * episode_infos (dict[str, torch.Tensor]): A dict of numpy arrays
                     containing the episode-level information of each episode.
                     Each value of this dict must be a numpy array of shape
                     :math:`(N, S^*)`. For example, in goal-conditioned
                     reinforcement learning this could contain the goal state
                     for each episode.
-                * observations (numpy.ndarray): Non-flattened array of
+                * observations (torch.Tensor): Non-flattened array of
                     observations.
                     Typically has shape (batch_size, S^*) (the unflattened
                     state space of the current environment).
-                * actions (numpy.ndarray): Non-flattened array of actions.
+                * actions (torch.Tensor): Non-flattened array of actions.
                     Must have shape (batch_size, S^*) (the unflattened action
                     space of the current environment).
-                * rewards (numpy.ndarray): Array of rewards of shape (
+                * rewards (torch.Tensor): Array of rewards of shape (
                     batch_size,) (1D array of length batch_size).
-                * next_observation (numpy.ndarray): Non-flattened array of next
+                * next_observation (torch.Tensor): Non-flattened array of next
                     observations. Has shape (batch_size, S^*).
                     next_observations[i] was observed by the agent after
                     taking actions[i].
@@ -422,7 +422,7 @@ class TimeStepBatch:
                 * agent_infos (dict): A dict of arbitrary agent
                     state information. For example, this may contain the
                     hidden states from an RNN policy.
-                * step_types (numpy.ndarray): A numpy array of `StepType with
+                * step_types (torch.Tensor): A numpy array of `StepType with
                 shape (batch_size,) containing the time step types for all
                     transitions in this batch.
 
@@ -481,39 +481,39 @@ class EpisodeBatch(TimeStepBatch):
     Attributes:
         env_spec (EnvSpec): Specification for the environment from
             which this data was sampled.
-        episode_infos (dict[str, np.ndarray]): A dict of numpy arrays
+        episode_infos (dict[str, torch.Tensor]): A dict of numpy arrays
             containing the episode-level information of each episode. Each
             value of this dict should be a numpy array of shape :math:`(N,
             S^*)`. For example, in goal-conditioned reinforcement learning this
             could contain the goal state for each episode.
-        observations (numpy.ndarray): A numpy array of shape
+        observations (torch.Tensor): A numpy array of shape
             :math:`(N \bullet [T], O^*)` containing the (possibly
             multi-dimensional) observations for all time steps in this batch.
             These must conform to :obj:`EnvStep.observation_space`.
-        last_observations (numpy.ndarray): A numpy array of shape
+        last_observations (torch.Tensor): A numpy array of shape
             :math:`(N, O^*)` containing the last observation of each episode.
             This is necessary since there are one more observations than
             actions every episode.
-        actions (numpy.ndarray): A  numpy array of shape
+        actions (torch.Tensor): A  numpy array of shape
             :math:`(N \bullet [T], A^*)` containing the (possibly
             multi-dimensional) actions for all time steps in this batch. These
             must conform to :obj:`EnvStep.action_space`.
-        rewards (numpy.ndarray): A numpy array of shape
+        rewards (torch.Tensor): A numpy array of shape
             :math:`(N \bullet [T])` containing the rewards for all time steps
             in this batch.
-        env_infos (dict[str, np.ndarray]): A dict of numpy arrays arbitrary
+        env_infos (dict[str, torch.Tensor]): A dict of numpy arrays arbitrary
             environment state information. Each value of this dict should be
             a numpy array of shape :math:`(N \bullet [T])` or :math:`(N \bullet
             [T], S^*)`.
-        agent_infos (dict[str, np.ndarray]): A dict of numpy arrays arbitrary
+        agent_infos (dict[str, torch.Tensor]): A dict of numpy arrays arbitrary
             agent state information. Each value of this dict should be a numpy
             array of shape :math:`(N \bullet [T])` or :math:`(N \bullet [T],
             S^*)`.  For example, this may contain the hidden states from an RNN
             policy.
-        step_types (numpy.ndarray): A numpy array of `StepType with shape
+        step_types (torch.Tensor): A numpy array of `StepType with shape
             :math:`(N \bullet [T])` containing the time step types for all
             transitions in this batch.
-        lengths (numpy.ndarray): An integer numpy array of shape :math:`(N,)`
+        lengths (torch.Tensor): An integer numpy array of shape :math:`(N,)`
             containing the length of each episode in this batch. This may be
             used to reconstruct the individual episodes.
 
@@ -522,9 +522,9 @@ class EpisodeBatch(TimeStepBatch):
             prescribed types and shapes.
 
     """
-    episode_infos_by_episode: np.ndarray
-    last_observations: np.ndarray
-    lengths: np.ndarray
+    episode_infos_by_episode: torch.Tensor
+    last_observations: torch.Tensor
+    lengths: torch.Tensor
 
     def __init__(self, env_spec, episode_infos, observations,
                  last_observations, masks, last_masks, actions, rewards,
@@ -546,10 +546,10 @@ class EpisodeBatch(TimeStepBatch):
         # episode_infos and next_observations in check_timestep_batch.
 
         for key, val in episode_infos.items():
-            if not isinstance(val, np.ndarray):
+            if not isinstance(val, torch.Tensor):
                 raise ValueError(
                     f'Entry {key!r} in episode_infos is of type {type(val)!r} '
-                    f'but must be of type {np.ndarray!r}')
+                    f'but must be of type {torch.Tensor!r}')
             if hasattr(val, 'shape'):
                 if val.shape[0] != n_episodes:
                     raise ValueError(
@@ -685,27 +685,27 @@ class EpisodeBatch(TimeStepBatch):
         """Convert the batch into a list of dictionaries.
 
         Returns:
-            list[dict[str, np.ndarray or dict[str, np.ndarray]]]: Keys:
-                * observations (np.ndarray): Non-flattened array of
+            list[dict[str, torch.Tensor or dict[str, torch.Tensor]]]: Keys:
+                * observations (torch.Tensor): Non-flattened array of
                     observations. Has shape (T, S^*) (the unflattened state
                     space of the current environment).  observations[i] was
                     used by the agent to choose actions[i].
-                * next_observations (np.ndarray): Non-flattened array of
+                * next_observations (torch.Tensor): Non-flattened array of
                     observations. Has shape (T, S^*). next_observations[i] was
                     observed by the agent after taking actions[i].
-                * actions (np.ndarray): Non-flattened array of actions. Must
+                * actions (torch.Tensor): Non-flattened array of actions. Must
                     have shape (T, S^*) (the unflattened action space of the
                     current environment).
-                * rewards (np.ndarray): Array of rewards of shape (T,) (1D
+                * rewards (torch.Tensor): Array of rewards of shape (T,) (1D
                     array of length timesteps).
-                * agent_infos (dict[str, np.ndarray]): Dictionary of stacked,
+                * agent_infos (dict[str, torch.Tensor]): Dictionary of stacked,
                     non-flattened `agent_info` arrays.
-                * env_infos (dict[str, np.ndarray]): Dictionary of stacked,
+                * env_infos (dict[str, torch.Tensor]): Dictionary of stacked,
                     non-flattened `env_info` arrays.
-                * step_types (numpy.ndarray): A numpy array of `StepType with
+                * step_types (torch.Tensor): A numpy array of `StepType with
                     shape (T,) containing the time step types for all
                     transitions in this batch.
-                * episode_infos (dict[str, np.ndarray]): Dictionary of stacked,
+                * episode_infos (dict[str, torch.Tensor]): Dictionary of stacked,
                     non-flattened `episode_info` arrays.
 
         """
@@ -742,15 +742,15 @@ class EpisodeBatch(TimeStepBatch):
         Args:
             env_spec (EnvSpec): Specification for the environment from which
                 this data was sampled.
-            paths (list[dict[str, np.ndarray or dict[str, np.ndarray]]]): Keys:
-                * episode_infos (dict[str, np.ndarray]): Dictionary of stacked,
+            paths (list[dict[str, torch.Tensor or dict[str, torch.Tensor]]]): Keys:
+                * episode_infos (dict[str, torch.Tensor]): Dictionary of stacked,
                     non-flattened `episode_info` arrays, each of shape (S^*).
-                * observations (np.ndarray): Non-flattened array of
+                * observations (torch.Tensor): Non-flattened array of
                     observations. Typically has shape (T, S^*) (the unflattened
                     state space of the current environment). observations[i]
                     was used by the agent to choose actions[i]. observations
                     may instead have shape (T + 1, S^*).
-                * next_observations (np.ndarray): Non-flattened array of
+                * next_observations (torch.Tensor): Non-flattened array of
                     observations. Has shape (T, S^*). next_observations[i] was
                     observed by the agent after taking actions[i]. Optional.
                     Note that to ensure all information from the environment
@@ -758,24 +758,24 @@ class EpisodeBatch(TimeStepBatch):
                     S^*), or this key must be set. However, this method is
                     lenient and will "duplicate" the last observation if the
                     original last observation has been lost.
-                * actions (np.ndarray): Non-flattened array of actions. Must
+                * actions (torch.Tensor): Non-flattened array of actions. Must
                     have shape (T, S^*) (the unflattened action space of the
                     current environment).
-                * rewards (np.ndarray): Array of rewards of shape (T,) (1D
+                * rewards (torch.Tensor): Array of rewards of shape (T,) (1D
                     array of length timesteps).
-                * agent_infos (dict[str, np.ndarray]): Dictionary of stacked,
+                * agent_infos (dict[str, torch.Tensor]): Dictionary of stacked,
                     non-flattened `agent_info` arrays.
-                * env_infos (dict[str, np.ndarray]): Dictionary of stacked,
+                * env_infos (dict[str, torch.Tensor]): Dictionary of stacked,
                     non-flattened `env_info` arrays.
-                * step_types (numpy.ndarray): A numpy array of `StepType with
+                * step_types (torch.Tensor): A numpy array of `StepType with
                     shape (T,) containing the time step types for all
                     transitions in this batch.
         """
-        lengths = np.asarray([len(p['rewards']) for p in paths])
+        lengths = torch.as_tensor([len(p['rewards']) for p in paths])
         if all(
                 len(path['observations']) == length + 1
                 for (path, length) in zip(paths, lengths)):
-            last_observations = np.asarray(
+            last_observations = torch.as_tensor(
                 [p['observations'][-1] for p in paths])
             observations = torch.cat(
                 [p['observations'][:-1] for p in paths])
@@ -783,10 +783,10 @@ class EpisodeBatch(TimeStepBatch):
             # The number of observations and timesteps must match.
             observations = torch.cat([p['observations'] for p in paths])
             if paths[0].get('next_observations') is not None:
-                last_observations = np.asarray(
+                last_observations = torch.as_tensor(
                     [p['next_observations'][-1] for p in paths])
             else:
-                last_observations = np.asarray(
+                last_observations = torch.as_tensor(
                     [p['observations'][-1] for p in paths])
 
         stacked_paths = concat_tensor_dict_list(paths)
@@ -824,13 +824,13 @@ class EpisodeBatch(TimeStepBatch):
         the batch.
 
         Returns:
-            np.ndarray: The "next_observations" with shape
+            torch.Tensor: The "next_observations" with shape
                 :math:`(N \bullet [T], O^*)`
 
         """
-        return np.concatenate(
+        return torch.cat(
             tuple([
-                np.concatenate((eps.observations[1:], eps.last_observations))
+                torch.cat((eps.observations[1:], eps.last_observations))
                 for eps in self.split()
             ]))
 
@@ -845,7 +845,7 @@ class EpisodeBatch(TimeStepBatch):
         :math:`(N \bullet [T])`.
 
         Returns:
-            dict[str, np.ndarray]: The episode_infos each of length :math:`(N
+            dict[str, torch.Tensor]: The episode_infos each of length :math:`(N
                 \bullet [T])`.
 
         """
@@ -862,7 +862,7 @@ class EpisodeBatch(TimeStepBatch):
         """Padded observations.
 
         Returns:
-            np.ndarray: Padded observations with shape of
+            torch.Tensor: Padded observations with shape of
                 :math:`(N, max_episode_length, O^*)`.
 
         """
@@ -874,7 +874,7 @@ class EpisodeBatch(TimeStepBatch):
         """Padded actions.
 
         Returns:
-            np.ndarray: Padded actions with shape of
+            torch.Tensor: Padded actions with shape of
                 :math:`(N, max_episode_length, A^*)`.
 
         """
@@ -886,7 +886,7 @@ class EpisodeBatch(TimeStepBatch):
         """Split observations into a list.
 
         Returns:
-            list[np.ndarray]: Splitted list.
+            list[torch.Tensor]: Splitted list.
 
         """
         obs_list = []
@@ -899,7 +899,7 @@ class EpisodeBatch(TimeStepBatch):
         """Split actions into a list.
 
         Returns:
-            list[np.ndarray]: Splitted list.
+            list[torch.Tensor]: Splitted list.
 
         """
         acts_list = []
@@ -912,7 +912,7 @@ class EpisodeBatch(TimeStepBatch):
         """Padded rewards.
 
         Returns:
-            np.ndarray: Padded rewards with shape of
+            torch.Tensor: Padded rewards with shape of
                 :math:`(N, max_episode_length)`.
 
         """
@@ -924,7 +924,7 @@ class EpisodeBatch(TimeStepBatch):
         """An array indicating valid steps in a padded tensor.
 
         Returns:
-            np.ndarray: the shape is :math:`(N, max_episode_length)`.
+            torch.Tensor: the shape is :math:`(N, max_episode_length)`.
 
         """
         return pad_batch_array(np.ones_like(self.rewards), self.lengths,
@@ -935,7 +935,7 @@ class EpisodeBatch(TimeStepBatch):
         """Padded next_observations array.
 
         Returns:
-            np.ndarray: Array of shape :math:`(N, max_episode_length, O^*)`
+            torch.Tensor: Array of shape :math:`(N, max_episode_length, O^*)`
 
         """
         return pad_batch_array(self.next_observations, self.lengths,
@@ -946,7 +946,7 @@ class EpisodeBatch(TimeStepBatch):
         """Padded step_type array.
 
         Returns:
-            np.ndarray: Array of shape :math:`(N, max_episode_length)`
+            torch.Tensor: Array of shape :math:`(N, max_episode_length)`
 
         """
         return pad_batch_array(self.step_types, self.lengths,
@@ -957,7 +957,7 @@ class EpisodeBatch(TimeStepBatch):
         """Padded agent infos.
 
         Returns:
-            dict[str, np.ndarray]: Padded agent infos. Each value must have
+            dict[str, torch.Tensor]: Padded agent infos. Each value must have
                 shape with :math:`(N, max_episode_length)` or
                 :math:`(N, max_episode_length, S^*)`.
 
@@ -973,7 +973,7 @@ class EpisodeBatch(TimeStepBatch):
         """Padded env infos.
 
         Returns:
-            dict[str, np.ndarray]: Padded env infos. Each value must have
+            dict[str, torch.Tensor]: Padded env infos. Each value must have
                 shape with :math:`(N, max_episode_length)` or
                 :math:`(N, max_episode_length, S^*)`.
 
@@ -1052,7 +1052,7 @@ def check_timestep_batch(batch, array_type, ignored_fields=()):
                         f'Each {field[:-1]} has shape {value[0].shape} '
                         f'but must match the observation_space '
                         f'{env_spec.observation_space}')
-                if (isinstance(value[0], np.ndarray)
+                if (isinstance(value[0], torch.Tensor)
                         and not env_spec.observation_space.contains(value[0])):
                     warnings.warn(
                         f'Observation {value[0]!r} is outside '

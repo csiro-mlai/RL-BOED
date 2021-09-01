@@ -350,7 +350,7 @@ class Trainer:
         """
         logger.log('Time %.2f s' % (time.time() - self._start_time))
         logger.log('EpochTime %.2f s' % (time.time() - self._itr_start_time))
-        tabular.record('TotalEnvSteps', self._stats.total_env_steps)
+        tabular.record('TotalEnvSteps', self._stats.total_env_steps.item())
         logger.log(tabular)
 
         if self._plot:

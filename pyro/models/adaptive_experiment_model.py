@@ -177,19 +177,19 @@ class PreyModel(ExperimentModel):
                  n_parallel=1, obs_sd=0.005, obs_label="y"):
         super().__init__()
         self.a_mu = a_mu if a_mu is not None \
-            else torch.ones(n_parallel, 1) * -1.4
+            else torch.ones(n_parallel, 1, 1) * -1.4
         self.a_sig = a_sig if a_sig is not None \
-            else torch.ones(n_parallel, 1) * 1.35
+            else torch.ones(n_parallel, 1, 1) * 1.35
         self.th_mu = th_mu if th_mu is not None \
-            else torch.ones(n_parallel, 1) * -1.4
+            else torch.ones(n_parallel, 1, 1) * -1.4
         self.th_sig = th_sig if th_sig is not None \
-            else torch.ones(n_parallel, 1) * 1.35
+            else torch.ones(n_parallel, 1, 1) * 1.35
         self.tau = tau
         self.n_parallel = n_parallel
         self.obs_sd = obs_sd
         self.obs_label = obs_label
         self.var_names = ["a", "th"]
-        self.var_dim = 2
+        self.var_dim = 1
         self.sanity_check()
 
     def make_model(self):
@@ -200,31 +200,41 @@ class PreyModel(ExperimentModel):
             with ExitStack() as stack:
                 for plate in iter_plates_to_shape(batch_shape):
                     stack.enter_context(plate)
+                a_shape = batch_shape + self.a_mu.shape[-1:]
                 a = pyro.sample(
                     "a",
                     dist.LogNormal(
-                        self.a_mu.expand(batch_shape),
-                        self.a_sig.expand(batch_shape)
-                    )
+                        self.a_mu.expand(a_shape),
+                        self.a_sig.expand(a_shape)
+                    ).to_event(1)
                 )
+                th_shape = batch_shape + self.th_mu.shape[-1:]
                 th = pyro.sample(
                     "th",
                     dist.LogNormal(
-                        self.th_mu.expand(batch_shape),
-                        self.th_sig.expand(batch_shape)
-                    )
+                        self.th_mu.expand(th_shape),
+                        self.th_sig.expand(th_shape)
+                    ).to_event(1)
                 )
-                diff_func = partial(holling2, a.numpy(), th.numpy())
-                n_t = solve_ivp(diff_func, (0, self.tau), design.numpy())
-                n_t = torch.as_tensor(n_t)
+                diff_func = partial(holling2, a.numpy().flatten(), th.numpy().flatten())
+                int_sol = solve_ivp(diff_func, (0, self.tau), design.numpy().flatten())
+                n_t = torch.as_tensor(int_sol.y[:, -1], dtype=torch.float).reshape(design.shape)
                 p_t = (design - n_t) / design
-                emission_dist = dist.Binomial(design, p_t)
+                emission_dist = dist.Binomial(design.reshape(a_shape),
+                                              p_t.reshape(a_shape)).to_event(1)
                 n = pyro.sample(
                     self.obs_label, emission_dist
                 )
                 return n
 
         return model
+
+    def reset(self, n_parallel):
+        self.n_parallel = n_parallel
+        self.a_mu = torch.ones(n_parallel, 1, 1) * -1.4
+        self.a_sig = torch.ones(n_parallel, 1, 1) * 1.35
+        self.th_mu = torch.ones(n_parallel, 1, 1) * -1.4
+        self.th_sig = torch.ones(n_parallel, 1, 1) * 1.35
 
 
 class SourceModel(ExperimentModel):

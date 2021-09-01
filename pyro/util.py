@@ -46,7 +46,7 @@ def torch_isinf(x):
     """
     if isinstance(x, numbers.Number):
         return x == float('inf') or x == -float('inf')
-    return (x == float('inf')).any() or (x == -float('inf')).any()
+    return torch.isinf(x).any()
 
 
 def warn_if_nan(value, msg=""):

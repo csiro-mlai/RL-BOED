@@ -4,28 +4,58 @@ import collections
 import numpy as np
 import torch
 
+from pyro._dtypes import TimeStepBatch
+
 
 class PathBuffer:
-    """A replay buffer that stores and can sample whole paths.
-
-    This buffer only stores valid steps, and doesn't require paths to
-    have a maximum length.
-
-    Args:
-        capacity_in_transitions (int): Total memory allocated for the buffer.
-
+    """A replay buffer that stores and can sample whole episodes.	
+    This buffer only stores valid steps, and doesn't require paths to	
+    have a maximum length.	
+    Args:	
+        capacity_in_transitions (int): Total memory allocated for the buffer.	
+        env_spec (EnvSpec): Environment specification.	
     """
-
-    def __init__(self, capacity_in_transitions):
+    def __init__(self, capacity_in_transitions, env_spec=None):
         self._capacity = capacity_in_transitions
+        self._env_spec = env_spec
         self._transitions_stored = 0
         self._first_idx_of_next_path = 0
         # Each path in the buffer has a tuple of two ranges in
         # self._path_segments. If the path is stored in a single contiguous
         # region of the buffer, the second range will be range(0, 0).
-        # The "left" side of the deque contains the oldest path.
+        # The "left" side of the deque contains the oldest episode.
         self._path_segments = collections.deque()
         self._buffer = {}
+
+    def add_episode_batch(self, episodes):
+        """Add a EpisodeBatch to the buffer.	
+        Args:	
+            episodes (EpisodeBatch): Episodes to add.	
+        """
+        if self._env_spec is None:
+            self._env_spec = episodes.env_spec
+        env_spec = episodes.env_spec
+        obs_space = env_spec.observation_space
+        for eps in episodes.split():
+            # terminals = np.array([
+            #     step_type for step_type in eps.step_types
+            # ],
+            #                      dtype=bool)
+            # path = {
+            #     'observations': obs_space.flatten_n(eps.observations),
+            #     'next_observations':
+            #     obs_space.flatten_n(eps.next_observations),
+            #     'actions': env_spec.action_space.flatten_n(eps.actions),
+            #     'rewards': eps.rewards.reshape(-1, 1),
+            #     'terminals': terminals.reshape(-1, 1),
+            # }
+            path = dict(
+                observation=eps.observations,
+                action=eps.actions,
+                reward=eps.rewards.reshape(-1, 1),
+                next_observation=eps.next_observations,
+                terminal=eps.step_types.reshape(-1, 1))
+            self.add_path(path)
 
     def add_path(self, path):
         """Add a path to the buffer.
@@ -95,6 +125,27 @@ class PathBuffer:
         """
         idx = np.random.randint(self._transitions_stored, size=batch_size)
         return {key: buf_arr[idx] for key, buf_arr in self._buffer.items()}
+
+    def sample_timesteps(self, batch_size):
+        """Sample a batch of timesteps from the buffer.
+
+        Args:
+            batch_size (int): Number of timesteps to sample.
+
+        Returns:
+            TimeStepBatch: The batch of timesteps.
+
+        """
+        samples = self.sample_transitions(batch_size)
+        return TimeStepBatch(env_spec=self._env_spec,
+                             episode_infos={},
+                             observations=samples['observation'],
+                             actions=samples['action'],
+                             rewards=samples['reward'].flatten(),
+                             next_observations=samples['next_observation'],
+                             step_types=samples['terminal'].flatten(),
+                             env_infos={},
+                             agent_infos={})
 
     def _next_path_segments(self, n_indices):
         """Compute where the next path should be stored.
