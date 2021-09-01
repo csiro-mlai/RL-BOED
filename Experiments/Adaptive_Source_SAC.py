@@ -23,6 +23,7 @@ from pyro.sampler.local_sampler import LocalSampler
 from pyro.sampler.vector_worker import VectorWorker
 from pyro.spaces.batch_box import BatchBox
 from torch import nn
+from dowel import logger
 
 seeds = [373693, 943929, 675273, 79387, 508137, 557390, 756177, 155183, 262598,
          572185]
@@ -30,23 +31,30 @@ seeds = [373693, 943929, 675273, 79387, 508137, 557390, 756177, 155183, 262598,
 
 def main(n_parallel=1, budget=1, n_rl_itr=1, n_cont_samples=10, seed=0,
          log_dir=None, snapshot_mode='gap', snapshot_gap=500, bound_type=LOWER,
-         src_filepath=None, discount=1., alpha=None):
+         src_filepath=None, discount=1., alpha=None, k=2, d=2, log_info=None,
+         tau=5e-3, pi_lr=3e-4, qf_lr=3e-4, buffer_capacity=int(1e6)):
+    if log_info is None:
+        log_info = []
     @wrap_experiment(log_dir=log_dir, snapshot_mode=snapshot_mode,
                      snapshot_gap=snapshot_gap)
     def sac_source(ctxt=None, n_parallel=1, budget=1, n_rl_itr=1,
-                   n_cont_samples=10, seed=0, src_filepath=None,
-                   discount=1., alpha=None):
+                   n_cont_samples=10, seed=0, src_filepath=None, discount=1.,
+                   alpha=None, k=2, d=2, tau=5e-3, pi_lr=3e-4, qf_lr=3e-4,
+                   buffer_capacity=int(1e6)):
+        if log_info:
+            logger.log(str(log_info))
+
         if torch.cuda.is_available():
             set_gpu_mode(True)
             torch.set_default_tensor_type('torch.cuda.FloatTensor')
-            print("\nGPU available\n")
+            logger.log("GPU available")
         else:
             set_gpu_mode(False)
-            print("\nno GPU detected\n")
+            logger.log("no GPU detected")
         deterministic.set_seed(seed)
         set_rng_seed(seed)
         if src_filepath:
-            print(f"loading data from {src_filepath}")
+            logger.log(f"loading data from {src_filepath}")
             data = joblib.load(src_filepath)
             env = data['env']
             sac = data['algo']
@@ -54,13 +62,13 @@ def main(n_parallel=1, budget=1, n_rl_itr=1, n_cont_samples=10, seed=0,
                 sac._use_automatic_entropy_tuning = False
                 sac._fixed_alpha = alpha
         else:
-            print("creating new policy")
+            logger.log("creating new policy")
             layer_size = 128
-            design_space = BatchBox(low=-4., high=4., shape=(1, 1, 1, 2))
-            obs_space = BatchBox(low=torch.as_tensor([-8., -8., -3.]),
-                                 high=torch.as_tensor([8., 8., 10.])
+            design_space = BatchBox(low=-4., high=4., shape=(1, 1, 1, d))
+            obs_space = BatchBox(low=torch.as_tensor([-8.] * d + [-3.]),
+                                 high=torch.as_tensor([8.] * d + [10.])
                                  )
-            model = SourceModel(n_parallel=n_parallel)
+            model = SourceModel(n_parallel=n_parallel, d=d, k=k)
 
             def make_env(design_space, obs_space, model, budget, n_cont_samples,
                          bound_type, true_model=None):
@@ -107,7 +115,7 @@ def main(n_parallel=1, budget=1, n_rl_itr=1, n_cont_samples=10, seed=0,
             policy = make_policy()
             qf1 = make_q_func()
             qf2 = make_q_func()
-            replay_buffer = PathBuffer(capacity_in_transitions=int(1e6))
+            replay_buffer = PathBuffer(capacity_in_transitions=buffer_capacity)
             sampler = LocalSampler(agents=policy, envs=env,
                                    max_episode_length=budget,
                                    worker_class=VectorWorker)
@@ -120,8 +128,10 @@ def main(n_parallel=1, budget=1, n_rl_itr=1, n_cont_samples=10, seed=0,
                       sampler=sampler,
                       max_episode_length_eval=budget,
                       gradient_steps_per_itr=64,
-                      min_buffer_size=int(1e3),
-                      target_update_tau=5e-3,
+                      min_buffer_size=int(1e5),
+                      target_update_tau=tau,
+                      policy_lr=pi_lr,
+                      qf_lr=qf_lr,
                       discount=discount,
                       fixed_alpha=alpha,
                       buffer_batch_size=4096,
@@ -134,7 +144,11 @@ def main(n_parallel=1, budget=1, n_rl_itr=1, n_cont_samples=10, seed=0,
 
     sac_source(n_parallel=n_parallel, budget=budget, n_rl_itr=n_rl_itr,
                n_cont_samples=n_cont_samples, seed=seed,
-               src_filepath=src_filepath, discount=discount, alpha=alpha)
+               src_filepath=src_filepath, discount=discount, alpha=alpha, k=k,
+               d=d, tau=tau, pi_lr=pi_lr, qf_lr=qf_lr,
+               buffer_capacity=buffer_capacity)
+
+    logger.dump_all()
 
 
 if __name__ == "__main__":
@@ -152,13 +166,23 @@ if __name__ == "__main__":
                         choices=["lower", "upper", "terminal"])
     parser.add_argument("--discount", default="1", type=float)
     parser.add_argument("--alpha", default="-1", type=float)
+    parser.add_argument("--d", default="2", type=int)
+    parser.add_argument("--k", default="2", type=int)
+    parser.add_argument("--tau", default="5e-3", type=float)
+    parser.add_argument("--pi-lr", default="3e-4", type=float)
+    parser.add_argument("--qf-lr", default="3e-4", type=float)
+    parser.add_argument("--buffer-capacity", default="1e6", type=float)
     args = parser.parse_args()
     bound_type_dict = {"lower": LOWER, "upper": UPPER, "terminal": TERMINAL}
     bound_type = bound_type_dict[args.bound_type]
     exp_id = args.id
     alpha = args.alpha if args.alpha >= 0 else None
+    buff_cap = int(args.buffer_capacity)
+    log_info = f"input params: {vars(args)}"
     main(n_parallel=args.n_parallel, budget=args.budget, n_rl_itr=args.n_rl_itr,
          n_cont_samples=args.n_contr_samples, seed=seeds[exp_id - 1],
          log_dir=args.log_dir, snapshot_mode=args.snapshot_mode,
          snapshot_gap=args.snapshot_gap, bound_type=bound_type,
-         src_filepath=args.src_filepath, discount=args.discount, alpha=alpha)
+         src_filepath=args.src_filepath, discount=args.discount, alpha=alpha,
+         k=args.k, d=args.d, log_info=log_info, tau=args.tau, pi_lr=args.pi_lr,
+         qf_lr=args.qf_lr, buffer_capacity=buff_cap)
