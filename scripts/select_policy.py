@@ -8,7 +8,7 @@ import torch
 
 from time import time
 from pyro.contrib.util import lexpand
-from pyro.envs.adaptive_design_env import LOWER, UPPER
+from pyro.envs.adaptive_design_env import LOWER, UPPER, TERMINAL
 from garage.experiment import deterministic
 
 
@@ -38,18 +38,18 @@ def main(src, results, dest, n_contrastive_samples, n_parallel,
     if results is None:
         for j in range(rep):
             obs = env.reset(n_parallel=n_parallel)
-            print(env.env.env.theta0['theta'][0, 0])
+            # print("\n", env.env.env.theta0['theta'][0, 0], "\n")
             rewards.append([])
-            print("\n")
             for i in range(seq_length):
-                exp_obs = lexpand(obs, 100)
-                act, dist_info = pi.get_actions(exp_obs)
-                opt_index = torch.argmax(
-                    torch.min(qf1(exp_obs, act), qf2(exp_obs, act)),
-                    dim=0,
-                    keepdim=True)
-                opt_index = opt_index.expand((1,) + act.shape[1:])
-                act = torch.gather(act, 0, opt_index).squeeze()
+                # exp_obs = lexpand(obs, 100)
+                act, dist_info = pi.get_actions(obs)
+                # act = dist_info['mean']
+                # opt_index = torch.argmax(
+                #     torch.min(qf1(exp_obs, act), qf2(exp_obs, act)),
+                #     dim=0,
+                #     keepdim=True)
+                # opt_index = opt_index.expand((1,) + act.shape[1:])
+                # act = torch.gather(act, 0, opt_index).squeeze()
                 if random:
                     # act = env.action_space.sample((n_parallel,))/8.
                     low, high = env.action_space.bounds
@@ -57,11 +57,11 @@ def main(src, results, dest, n_contrastive_samples, n_parallel,
                         torch.zeros_like(low), torch.ones_like(high))
                     act = act_dist.sample((n_parallel,))/8.
                 act = act.reshape(env.env.env.n_parallel, 1, 1, -1)
-                print(f"act {act[0] * 8}")
-                # print(f"mean {dist_info['mean'][0] * 8}")
-                # print(f"std {dist_info['log_std'][0].exp() * 8}")
+                # print(f"act {act[0] * 4}")
+                # print(f"mean {dist_info['mean'][0] * 4}")
+                # print(f"std {dist_info['log_std'][0].exp() * 4}")
                 obs, reward, _, _ = env.step(act)
-                obs_lb, obs_ub = env.observation_space.bounds
+                # obs_lb, obs_ub = env.observation_space.bounds
                 # print(f"obs {obs[0][-1] * (obs_ub - obs_lb) + obs_lb}")
                 # print(f"reward {reward[0]}")
                 if bound_type == UPPER:
@@ -83,17 +83,13 @@ def main(src, results, dest, n_contrastive_samples, n_parallel,
 
             for j in range(rep):
                 env.reset(n_parallel=n_parallel)
+                for k, v in theta0.items():
+                    env.env.env.thetas[k][0] = \
+                        v[j * n_parallel:(j + 1) * n_parallel]
                 rewards.append([])
                 for i in range(seq_length):
                     y = ys[i]
                     design = designs[i]
-                    for k, v in theta0.items():
-                        env.env.env.thetas[k][0] = \
-                            v[j*n_parallel:(j+1)*n_parallel]
-                    # env.env.env.theta0 = {
-                    #     k: v[j*n_parallel:(j+1)*n_parallel]
-                    #     for k, v in theta0.items()
-                    # }
                     reward = env.env.env.get_reward(
                         y[j*n_parallel:(j+1)*n_parallel],
                         design[j*n_parallel:(j+1)*n_parallel])
@@ -129,9 +125,10 @@ if __name__ == "__main__":
     parser.add_argument("--edit_type", default="a", type=str)
     parser.add_argument("--seed", default=1, type=int)
     parser.add_argument("--bound_type", default="lower", type=str.lower,
-                        choices=["lower", "upper"])
+                        choices=["lower", "upper", "terminal"])
     args = parser.parse_args()
-    bound_type = {"lower": LOWER, "upper": UPPER}[args.bound_type]
+    bound_type = {
+        "lower": LOWER, "upper": UPPER, "terminal": TERMINAL}[args.bound_type]
     main(args.src, args.results, args.dest, args.n_contrastive_samples,
          args.n_parallel, args.seq_length, args.edit_type, args.n_samples,
          args.seed, bound_type)
