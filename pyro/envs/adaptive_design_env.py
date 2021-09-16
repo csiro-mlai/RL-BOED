@@ -56,7 +56,7 @@ class AdaptiveDesignEnv(Env):
         y = self.model.run_experiment(design, self.theta0)
         self.history.append(
             torch.cat(
-                [design.squeeze(dim=-2).squeeze(dim=-2), y.squeeze(dim=-1)],
+                [design.squeeze(dim=-2).squeeze(dim=-2), y.squeeze(dim=-2)],
                 dim=-1
             )
         )
