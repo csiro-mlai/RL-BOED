@@ -50,7 +50,7 @@ class QLModel(ExperimentModel):
                     ).to_event(2)
                 )
 
-                Q = torch.rand(design.shape)
+                Q = torch.zeros(design.shape)
                 y = torch.zeros(batch_shape + (1, self.T, 2))
                 for i in range(self.T):
                     action = pyro.sample(f"a_{i}", dist.Categorical(logits=Q * theta_gamma).to_event(1))
@@ -71,12 +71,12 @@ class QLModel(ExperimentModel):
         y = y.unflatten(-1, (self.T, 2))
         for t in range(0, self.T):
             cond_dict.update({f"a_{t}": lexpand(y[..., t, np.newaxis, 0].type(torch.int64), size)})
-            cond_dict.update({f"r_{t}": lexpand(y[..., t, np.newaxis, 1], size)})
+            cond_dict.update({f"r_{t}": lexpand(y[..., t, np.newaxis, 1].type(torch.int64), size)})
 
         cond_model = pyro.condition(self.make_model(), data=cond_dict)
         trace = poutine.trace(cond_model).get_trace(lexpand(design, size))
         trace.compute_log_prob()
-        likelihoods = trace.nodes[f"a_{0}"]["log_prob"] + trace.nodes[f"r_{1}"]["log_prob"]
+        likelihoods = trace.nodes[f"a_{0}"]["log_prob"] + trace.nodes[f"r_{0}"]["log_prob"]
         for t in range(1, self.T):
             likelihoods += trace.nodes[f"a_{t}"]["log_prob"] + trace.nodes[f"r_{t}"]["log_prob"]
         return likelihoods
