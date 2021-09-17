@@ -68,7 +68,11 @@ class QLModel(ExperimentModel):
     def get_likelihoods(self, y, design, thetas):
         size = thetas[self.var_names[0]].shape[0]
         cond_dict = dict(thetas)
-        cond_dict.update({self.obs_label: lexpand(y, size)})
+        y = y.unflatten(-1, (self.T, 2))
+        for t in range(0, self.T):
+            cond_dict.update({f"a_{t}": lexpand(y[..., t, np.newaxis, 0].type(torch.int64), size)})
+            cond_dict.update({f"r_{t}": lexpand(y[..., t, np.newaxis, 1], size)})
+
         cond_model = pyro.condition(self.make_model(), data=cond_dict)
         trace = poutine.trace(cond_model).get_trace(lexpand(design, size))
         trace.compute_log_prob()
