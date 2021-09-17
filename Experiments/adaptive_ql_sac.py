@@ -155,7 +155,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--id", default="1", type=int)
     parser.add_argument("--n-parallel", default="100", type=int)
-    parser.add_argument("--budget", default="30", type=int)
+    parser.add_argument("--budget", default="5", type=int)
     parser.add_argument("--n-rl-itr", default="50", type=int)
     parser.add_argument("--n-contr-samples", default="10", type=int)
     parser.add_argument("--log-dir", default=None, type=str)
