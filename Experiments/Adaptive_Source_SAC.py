@@ -58,6 +58,9 @@ def main(n_parallel=1, budget=1, n_rl_itr=1, n_cont_samples=10, seed=0,
             data = joblib.load(src_filepath)
             env = data['env']
             sac = data['algo']
+            sac._sampler = LocalSampler(agents=sac.policy, envs=env,
+                                        max_episode_length=budget,
+                                        worker_class=VectorWorker)
             if alpha is not None:
                 sac._use_automatic_entropy_tuning = False
                 sac._fixed_alpha = alpha
@@ -65,8 +68,8 @@ def main(n_parallel=1, budget=1, n_rl_itr=1, n_cont_samples=10, seed=0,
             logger.log("creating new policy")
             layer_size = 128
             design_space = BatchBox(low=-4., high=4., shape=(1, 1, 1, d))
-            obs_space = BatchBox(low=torch.as_tensor([-8.] * d + [-3.]),
-                                 high=torch.as_tensor([8.] * d + [10.])
+            obs_space = BatchBox(low=torch.as_tensor([-4.] * d + [-3.]),
+                                 high=torch.as_tensor([4.] * d + [10.])
                                  )
             model = SourceModel(n_parallel=n_parallel, d=d, k=k)
 
@@ -133,6 +136,7 @@ def main(n_parallel=1, budget=1, n_rl_itr=1, n_cont_samples=10, seed=0,
                       policy_lr=pi_lr,
                       qf_lr=qf_lr,
                       discount=discount,
+                      discount_delta=0.,
                       fixed_alpha=alpha,
                       buffer_batch_size=4096,
                       reward_scale=1.,)

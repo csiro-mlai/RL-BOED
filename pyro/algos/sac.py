@@ -64,6 +64,7 @@ class SAC(RLAlgorithm):
             and the entropy/temperature coefficient is being learned.
         discount (float): Discount factor to be used during sampling and
             critic/q_function optimization.
+        discount_delta (float): change in discount factor once-per-epoch
         buffer_batch_size (int): The number of transitions sampled from the
             replay buffer that are used during a single optimization step.
         min_buffer_size (int): The minimum number of transitions that need to
@@ -103,6 +104,7 @@ class SAC(RLAlgorithm):
             target_entropy=None,
             initial_log_entropy=0.,
             discount=0.99,
+            discount_delta=0.,
             buffer_batch_size=64,
             min_buffer_size=int(1e4),
             target_update_tau=5e-3,
@@ -131,6 +133,7 @@ class SAC(RLAlgorithm):
         self._steps_per_epoch = steps_per_epoch
         self._buffer_batch_size = buffer_batch_size
         self._discount = discount
+        self._discount_delta = discount_delta
         self._reward_scale = reward_scale
         self.max_episode_length = env_spec.max_episode_length
         self._max_episode_length_eval = env_spec.max_episode_length
@@ -224,6 +227,8 @@ class SAC(RLAlgorithm):
             if self._eval_env is not None:
                 last_return = self._evaluate_policy(trainer.step_itr)
             self._log_statistics(policy_loss, qf1_loss, qf2_loss)
+            self._discount = np.clip(self._discount + self._discount_delta,
+                                     a_min=0., a_max=1.)
             tabular.record('TotalEnvSteps', trainer.total_env_steps)
             tabular.record('Return/MedianReturn', np.median(allrets))
             tabular.record('Return/LowerQuartileReturn',
@@ -234,6 +239,7 @@ class SAC(RLAlgorithm):
             tabular.record('Return/StdReturn', np.std(allrets))
             tabular.record("Return/MaxReturn", allrets.max())
             tabular.record("Return/MinReturn", allrets.min())
+            tabular.record("Policy/Discount", self._discount)
             tabular.record("Policy/MeanStd", mean_std)
             tabular.record("Policy/Mean", mean_mean)
             tabular.record("Action/MeanAction", allact.mean(axis=0))
@@ -553,3 +559,8 @@ class SAC(RLAlgorithm):
                                             ]).to(device).requires_grad_()
             self._alpha_optimizer = self._optimizer([self._log_alpha],
                                                     lr=self._policy_lr)
+
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        del state['_sampler']
+        return state
