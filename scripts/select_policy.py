@@ -24,21 +24,23 @@ def main(src, results, dest, n_contrastive_samples, n_parallel,
     torch.set_printoptions(threshold=int(1e10))
     data = joblib.load(src)
     print(f"loaded data from {src}")
+    if hasattr(data['algo'], '_sampler'):
+        del data['algo']._sampler
+    torch.cuda.empty_cache()
     algo, env = data['algo'], data['env']
     pi = algo.policy
-    qf1, qf2 = algo._qf1, algo._qf2
-    env.env.env.l = n_contrastive_samples
-    env.env.env.n_parallel = n_parallel
-    env.env.env.bound_type = bound_type
+    env.env.l = n_contrastive_samples
+    env.env.n_parallel = n_parallel
+    env.env.bound_type = bound_type
     rewards = []
-    rep = n_samples // env.env.env.n_parallel
-    print(f"{n_samples} / {env.env.env.n_parallel} = {rep} iterations to run")
+    rep = n_samples // env.env.n_parallel
+    print(f"{n_samples} / {env.env.n_parallel} = {rep} iterations to run")
     t0 = time()
     random = False
     if results is None:
         for j in range(rep):
-            obs = env.reset(n_parallel=n_parallel)
-            # print("\n", env.env.env.theta0['theta'][0, 0], "\n")
+            obs, _ = env.reset(n_parallel=n_parallel)
+            # print("\n", env.env.theta0['theta'][0, 0], "\n")
             rewards.append([])
             for i in range(seq_length):
                 # exp_obs = lexpand(obs, 100)
@@ -56,11 +58,12 @@ def main(src, results, dest, n_contrastive_samples, n_parallel,
                     act_dist = torch.distributions.Normal(
                         torch.zeros_like(low), torch.ones_like(high))
                     act = act_dist.sample((n_parallel,))/8.
-                act = act.reshape(env.env.env.n_parallel, 1, 1, -1)
+                act = act.reshape(env.env.n_parallel, 1, 1, -1)
                 # print(f"act {act[0] * 4}")
                 # print(f"mean {dist_info['mean'][0] * 4}")
                 # print(f"std {dist_info['log_std'][0].exp() * 4}")
-                obs, reward, _, _ = env.step(act)
+                es = env.step(act)
+                obs, reward = es.observation, es.reward
                 # obs_lb, obs_ub = env.observation_space.bounds
                 # print(f"obs {obs[0][-1] * (obs_ub - obs_lb) + obs_lb}")
                 # print(f"reward {reward[0]}")
@@ -84,13 +87,13 @@ def main(src, results, dest, n_contrastive_samples, n_parallel,
             for j in range(rep):
                 env.reset(n_parallel=n_parallel)
                 for k, v in theta0.items():
-                    env.env.env.thetas[k][0] = \
+                    env.env.thetas[k][0] = \
                         v[j * n_parallel:(j + 1) * n_parallel]
                 rewards.append([])
                 for i in range(seq_length):
                     y = ys[i]
                     design = designs[i]
-                    reward = env.env.env.get_reward(
+                    reward = env.env.get_reward(
                         y[j*n_parallel:(j+1)*n_parallel],
                         design[j*n_parallel:(j+1)*n_parallel])
                     rewards[-1].append(reward)

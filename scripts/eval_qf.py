@@ -28,7 +28,17 @@ def set_state(env, history, log_prod, last_logsumprod):
     env.last_logsumprod = last_logsumprod
 
 
-def main(src, n_contrastive_samples, n_parallel, seq_length, seed, bound_type):
+def pad_obs(maxlen, obs):
+    pad_shape = list(obs.shape)
+    pad_shape[1] = maxlen - pad_shape[1]
+    pad = torch.zeros(pad_shape)
+    padded_obs = torch.cat([obs, pad], dim=1)
+    mask = torch.cat([torch.ones_like(obs), pad], dim=1)[..., :1]
+    return padded_obs, mask
+
+
+def main(src, n_contrastive_samples, n_parallel, seq_length, seed, bound_type,
+         myopic):
     # set up environment
     if torch.cuda.is_available():
         torch.set_default_tensor_type('torch.cuda.FloatTensor')
@@ -39,7 +49,8 @@ def main(src, n_contrastive_samples, n_parallel, seq_length, seed, bound_type):
     # load model
     data = joblib.load(src)
     print(f"loaded data from {src}")
-    del data['algo']._sampler
+    if hasattr(data['algo'], '_sampler'):
+        del data['algo']._sampler
     torch.cuda.empty_cache()
     algo, env = data['algo'], data['env']
     pi = algo.policy
@@ -48,7 +59,7 @@ def main(src, n_contrastive_samples, n_parallel, seq_length, seed, bound_type):
     env.env.n_parallel = n_parallel
     env.env.bound_type = bound_type
 
-    errs1, errs2 = [], []
+    errs1, errs2, errsmin = [], [], []
     obs, _ = env.reset(n_parallel=n_parallel)
     for j in range(0, seq_length):
         print(f"begin {j}th timestep")
@@ -61,6 +72,7 @@ def main(src, n_contrastive_samples, n_parallel, seq_length, seed, bound_type):
         cur_last_logsumprod = env.last_logsumprod.detach().clone()
         errs1.append([])
         errs2.append([])
+        errsmin.append([])
 
         # for trajectory i at timestep j, generate n subtrajectories from j to T
         for i in range(n_parallel):
@@ -84,27 +96,42 @@ def main(src, n_contrastive_samples, n_parallel, seq_length, seed, bound_type):
                 sub_rews.append(sub_es.reward)
 
             # compute Q*_pi(s_ij, a_ij) as average return-to-go
-            true_q = sum(sub_rews).mean()
+            if myopic:
+                true_q = sub_rews[0].mean()
+            else:
+                true_q = sum(sub_rews).mean()
             # compute err(s_ij, a_ij)
-            q1_pred = qf1(cur_obs[i:i+1], cur_act[i].reshape(1, -1)).squeeze()
-            q2_pred = qf2(cur_obs[i:i+1], cur_act[i].reshape(1, -1)).squeeze()
+            padded_obs, mask = pad_obs(env.budget, cur_obs[i:i+1])
+            reshaped_act = cur_act[i].reshape(1, -1)
+            q1_pred = qf1(padded_obs, reshaped_act).squeeze()
+            q2_pred = qf2(padded_obs, reshaped_act).squeeze()
+            qmin_pred = torch.min(q1_pred, q2_pred)
+            # print(true_q.item(),
+            #       qf1(padded_obs, reshaped_act, mask).squeeze().item(),
+            #       qf1(cur_obs[i:i+1], reshaped_act).squeeze().item(),
+            #       qf1(padded_obs, reshaped_act).squeeze().item())
             errs1[-1].append(loss_fn(q1_pred, true_q))
             errs2[-1].append(loss_fn(q2_pred, true_q))
+            errsmin[-1].append(loss_fn(qmin_pred, true_q))
 
         # advance trajectories to the next timestep
+        set_state(env.env, cur_hist, cur_logprod, cur_last_logsumprod)
         env._step_cnt = j
         es = env.step(cur_act)
         obs, rew = es.observation, es.reward
-        set_state(env.env, cur_hist, cur_logprod, cur_last_logsumprod)
 
-    errs1 = torch.tensor(errs1).numpy()
-    errs2 = torch.tensor(errs2).numpy()
+    errs1 = torch.tensor(errs1).cpu().numpy()
+    errs2 = torch.tensor(errs2).cpu().numpy()
+    errsmin = torch.tensor(errsmin).cpu().numpy()
     print("qf1 error: ")
-    print(f"mean = {errs1.mean()}\t SD = {errs1.std()} \n"
+    print(f"mean = {errs1.mean(axis=1)}\t SD = {errs1.std()} \n"
           f"median = {np.percentile(errs1, 50)}")
     print("qf2 error: ")
-    print(f"mean = {errs2.mean()}\t SD = {errs2.std()} \n"
+    print(f"mean = {errs2.mean(axis=1)}\t SD = {errs2.std()} \n"
           f"median = {np.percentile(errs2, 50)}")
+    print("qfmin error: ")
+    print(f"mean = {errsmin.mean(axis=1)}\t SD = {errsmin.std()} \n"
+          f"median = {np.percentile(errsmin, 50)}")
 
 
 if __name__ == "__main__":
@@ -118,10 +145,11 @@ if __name__ == "__main__":
     parser.add_argument("--seq_length", default=20, type=int)
     parser.add_argument("--edit_type", default="a", type=str)
     parser.add_argument("--seed", default=1, type=int)
+    parser.add_argument("--myopic", action="store_true")
     parser.add_argument("--bound_type", default="lower", type=str.lower,
                         choices=["lower", "upper", "terminal"])
     args = parser.parse_args()
     bound_type = {
         "lower": LOWER, "upper": UPPER, "terminal": TERMINAL}[args.bound_type]
     main(args.src, args.n_contrastive_samples, args.n_parallel, args.seq_length,
-         args.seed, bound_type)
+         args.seed, bound_type, args.myopic)

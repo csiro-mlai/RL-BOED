@@ -16,7 +16,7 @@ class BatchDiscrete(Discrete):
         self.shape = shape
 
     def sample(self, shape=(1,)):
-        return torch.randint(low=self.floor, high=self.n, size=shape)
+        return torch.randint(low=self.floor, high=self.n + 1, size=shape)
 
     def contains(self, x):
         if isinstance(x, list):
@@ -28,6 +28,9 @@ class BatchDiscrete(Discrete):
 
     def unflatten_n(self, obs):
         return torch.as_tensor(obs).reshape((len(obs), -1, 1))
+
+    # def flatten_n(self, xs):
+    #     ret = np.zeros()
 
     def concat(self, other):
         raise NotImplementedError
