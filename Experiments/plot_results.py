@@ -17,23 +17,25 @@ titlesize = 26
 data = np.load("results.npz")
 step = 10
 L = 1e5
-err_bar = "std"
-title_template = " 20-step CES"
+err_bar = "se"
+title_template = "30-step Source Location"
 redline_x = np.array([100*i for i in range(20)])
 
-typ = "emeans" if err_bar == "std" else "emedians"
+typ = "emeans" if err_bar in ["std", "se"] else "emedians"
 means = data[typ].astype(np.float64).reshape((-1,))
 smoothed_means = np.asarray([means[i:i+step].mean() for i in range(means.size - step)])
 fig = plt.figure(figsize=(width, height), dpi=fig_dpi)
 fig.clear()
-xlim, ylim = [-5,10000], [0,13]
+xlim, ylim = [-5,20000], [0,12]
 ax = fig.add_subplot(1,1,1, xlim=xlim, ylim=ylim)
 ax.plot(np.arange(0, smoothed_means.size), smoothed_means)
 # ax.vlines(redline_x, ymin=ylim[0], ymax=ylim[1], colors=["red"], linestyles='dashed')
 ax.hlines(np.log(L+1), xmin=xlim[0], xmax=xlim[1], colors=["black"], linestyles='dashed')
-if err_bar == "std":
+if err_bar in ["std", "se"]:
 	stds = data['estds'].astype(np.float64).reshape((-1,))
 	smoothed_stds = np.asarray([stds[i:i+step].mean() for i in range(stds.size - step)])
+	if err_bar == "se":
+		smoothed_stds /= 10
 	upper_bound = smoothed_means + smoothed_stds
 	lower_bound = smoothed_means - smoothed_stds
 elif err_bar == "iqr":
@@ -50,11 +52,11 @@ ax.set_ylabel("sPCE")
 ax.set_title(f"{title_template} Evaluation ({err_bar})", fontsize=titlesize)
 plt.grid(True)
 fig.tight_layout()
-fig.savefig("ces_evaluation.png")
+fig.savefig("source_evaluation.png")
 
 
 
-typ = "rmeans" if err_bar == "std" else "rmedians"
+typ = "rmeans" if err_bar in ["std", "se"] else "rmedians"
 means = data[typ].astype(np.float64).reshape((-1,))
 smoothed_means = np.asarray([means[i:i+step].mean() for i in range(means.size - step)])
 fig = plt.figure(figsize=(width, height), dpi=fig_dpi)
@@ -64,9 +66,11 @@ ax = fig.add_subplot(1,1,1, xlim=xlim, ylim=ylim)
 ax.plot(np.arange(0, smoothed_means.size), smoothed_means)
 # ax.vlines(redline_x, ymin=ylim[0], ymax=ylim[1], colors=["red"], linestyles='dashed')
 ax.hlines(np.log(L+1), xmin=xlim[0], xmax=xlim[1], colors=["black"], linestyles='dashed')
-if err_bar == "std":
+if err_bar in ["std", "se"]:
 	stds = data['rstds'].astype(np.float64).reshape((-1,))
 	smoothed_stds = np.asarray([stds[i:i+step].mean() for i in range(stds.size - step)])
+	if err_bar == "se":
+		smoothed_stds /= 10
 	upper_bound = smoothed_means + smoothed_stds
 	lower_bound = smoothed_means - smoothed_stds
 elif err_bar == "iqr":
@@ -78,10 +82,11 @@ elif err_bar == "iqr":
 ax.fill_between(
 	np.arange(0, smoothed_means.size), upper_bound, lower_bound, alpha=0.5
 )
+print(smoothed_means[-10:])
 ax.set_xlabel("Iterations")
 ax.set_ylabel("sPCE")
-ax.set_title(f"{title_template} Training ({err_bar})", fontsize=titlesize)
+ax.set_title(f"{title_template} Training", fontsize=titlesize)
 plt.grid(True)
 fig.tight_layout()
 
-fig.savefig("ces_returns.png")
+fig.savefig("source_returns.png")

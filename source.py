@@ -205,12 +205,12 @@ def main(num_steps, num_parallel, experiment_name, typs, seed, lengthscale,
             if estimate_eig:
                 y = eval_env.model.run_experiment(
                     d_star_design, eval_env.theta0)
-                spce += eval_env.get_reward(y, d_star_design)
-                results['spce'] = spce
+                # spce += eval_env.get_reward(y, d_star_design)
+                # results['spce'] = spce
                 if step == 0:
                     results['theta0'] = {
                         k: v.cpu() for k, v in eval_env.theta0.items()}
-                logging.info(f"spce {spce} {spce.shape}")
+                # logging.info(f"spce {spce} {spce.shape}")
             else:
                 y = true_model(d_star_design)
             ys = torch.cat([ys, y], dim=-1)
@@ -249,7 +249,7 @@ if __name__ == "__main__":
     parser.add_argument("--num-samples", default=10, type=int)
     parser.add_argument("--num-contrast-samples", default=10, type=int)
     parser.add_argument("--num-acquisition", default=8, type=int)
-    parser.add_argument("--observation-sd", default=0.005, type=float)
+    parser.add_argument("--observation-sd", default=0.5, type=float)
     parser.add_argument("--policy-src", default="", type=str)
     parser.add_argument("--estimate-eig", dest="estimate_eig",
                         action='store_true')
