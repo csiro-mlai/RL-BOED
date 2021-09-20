@@ -563,4 +563,5 @@ class SAC(RLAlgorithm):
     def __getstate__(self):
         state = self.__dict__.copy()
         del state['_sampler']
+        del state['replay_buffer']
         return state

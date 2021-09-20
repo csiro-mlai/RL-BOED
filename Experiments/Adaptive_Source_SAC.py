@@ -43,7 +43,6 @@ def main(n_parallel=1, budget=1, n_rl_itr=1, n_cont_samples=10, seed=0,
                    buffer_capacity=int(1e6)):
         if log_info:
             logger.log(str(log_info))
-
         if torch.cuda.is_available():
             set_gpu_mode(True)
             torch.set_default_tensor_type('torch.cuda.FloatTensor')
@@ -53,14 +52,19 @@ def main(n_parallel=1, budget=1, n_rl_itr=1, n_cont_samples=10, seed=0,
             logger.log("no GPU detected")
         deterministic.set_seed(seed)
         set_rng_seed(seed)
+        # if there is a saved agent to load
         if src_filepath:
             logger.log(f"loading data from {src_filepath}")
             data = joblib.load(src_filepath)
             env = data['env']
             sac = data['algo']
-            sac._sampler = LocalSampler(agents=sac.policy, envs=env,
-                                        max_episode_length=budget,
-                                        worker_class=VectorWorker)
+            if not hasattr(sac, '_sampler'):
+                sac._sampler = LocalSampler(agents=sac.policy, envs=env,
+                                            max_episode_length=budget,
+                                            worker_class=VectorWorker)
+            if not hasattr(sac, 'replay_buffer'):
+                sac.replay_buffer = PathBuffer(
+                    capacity_in_transitions=buffer_capacity)
             if alpha is not None:
                 sac._use_automatic_entropy_tuning = False
                 sac._fixed_alpha = alpha

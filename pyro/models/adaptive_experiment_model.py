@@ -5,11 +5,11 @@ from functools import partial
 from pyro import poutine
 from pyro.contrib.util import iter_plates_to_shape, lexpand, rexpand, rmv
 from pyro.util import is_bad
-from scipy.integrate import solve_ivp
+from torchdiffeq import odeint
 
-import torch
 import pyro
 import pyro.distributions as dist
+import torch
 
 EPS = 2**-22
 
@@ -172,8 +172,13 @@ def holling2(a, th, t, n):
     return -an / (1 + an * th)
 
 
+def holling3(a, th, t, n):
+    an2 = a * n * n
+    return -an2 / (1 + an2 * th)
+
+
 class PreyModel(ExperimentModel):
-    def __init__(self, a_mu=None, a_sig=None, th_mu=None, th_sig=None, tau=24,
+    def __init__(self, a_mu=None, a_sig=None, th_mu=None, th_sig=None, tau=24.,
                  n_parallel=1, obs_sd=0.005, obs_label="y"):
         super().__init__()
         self.a_mu = a_mu if a_mu is not None \
@@ -216,9 +221,18 @@ class PreyModel(ExperimentModel):
                         self.th_sig.expand(th_shape)
                     ).to_event(1)
                 )
-                diff_func = partial(holling2, a.numpy().flatten(), th.numpy().flatten())
-                int_sol = solve_ivp(diff_func, (0, self.tau), design.numpy().flatten())
-                n_t = torch.as_tensor(int_sol.y[:, -1], dtype=torch.float).reshape(design.shape)
+                diff_func = partial(
+                    holling3,
+                    a.flatten(),
+                    th.flatten())
+                with torch.no_grad():
+                    int_sol = odeint(
+                        diff_func,
+                        design.flatten(),
+                        torch.tensor([0., self.tau]),
+                        method="rk4",
+                        options={'step_size': None})
+                n_t = int_sol[-1].reshape(design.shape)
                 p_t = (design - n_t) / design
                 emission_dist = dist.Binomial(design.reshape(a_shape),
                                               p_t.reshape(a_shape)).to_event(1)

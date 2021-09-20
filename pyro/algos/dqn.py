@@ -168,6 +168,8 @@ class DQN(RLAlgorithm):
                 # self._episode_reward_mean.extend(last_returns)
                 # tabular.record('Evaluation/100EpRewardMean',
                 #                np.mean(self._episode_reward_mean))
+            self._epoch_ys = []
+            self._epoch_qs = []
 
             for _ in range(self._steps_per_epoch):
                 trainer.step_episode = trainer.obtain_episodes(
@@ -177,7 +179,8 @@ class DQN(RLAlgorithm):
 
                 self._train_once(trainer.step_itr, trainer.step_episode)
                 budget = self._max_episode_length_eval
-                allrets = trainer.step_episode.rewards.numpy()[budget-1::budget]
+                allrets = trainer.step_episode.rewards.cpu().numpy()
+                allrets = allrets.reshape(-1, budget).sum(axis=1)
                 tabular.record('Return/MedianReturn', np.median(allrets))
                 tabular.record('Return/LowerQuartileReturn',
                                np.percentile(allrets, 25))
@@ -202,6 +205,7 @@ class DQN(RLAlgorithm):
         self.replay_buffer.add_episode_batch(episodes)
 
         epoch = itr / self._steps_per_epoch
+        self._episode_qf_losses = []
 
         for _ in range(self._n_train_steps):
             if (self.replay_buffer.n_transitions_stored >=
@@ -286,8 +290,8 @@ class DQN(RLAlgorithm):
         y_target = y_target.squeeze(1)
 
         # optimize qf
-        qvals = self._qf(inputs)
-        selected_qs = torch.sum(qvals * actions, axis=1)
+        selected_qs = torch.gather(
+            self._qf(inputs), dim=1, index=actions.long() - 1).squeeze()
         qval_loss = F.smooth_l1_loss(selected_qs, y_target)
 
         self._qf_optimizer.zero_grad()
