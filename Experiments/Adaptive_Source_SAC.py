@@ -111,10 +111,10 @@ def main(n_parallel=1, budget=1, n_rl_itr=1, n_cont_samples=10, seed=0,
                     encoder_sizes=[layer_size, layer_size],
                     encoder_nonlinearity=nn.ReLU,
                     encoder_output_nonlinearity=None,
-                    emitter_sizes=[layer_size, layer_size],
+                    emitter_sizes=[2*layer_size, 2*layer_size],
                     emitter_nonlinearity=nn.ReLU,
                     emitter_output_nonlinearity=None,
-                    encoding_dim=layer_size//2
+                    encoding_dim=layer_size
                 )
 
             env = make_env(design_space, obs_space, model, budget,
@@ -134,7 +134,7 @@ def main(n_parallel=1, budget=1, n_rl_itr=1, n_cont_samples=10, seed=0,
                       replay_buffer=replay_buffer,
                       sampler=sampler,
                       max_episode_length_eval=budget,
-                      gradient_steps_per_itr=64,
+                      gradient_steps_per_itr=128,
                       min_buffer_size=int(1e5),
                       target_update_tau=tau,
                       policy_lr=pi_lr,
@@ -142,7 +142,7 @@ def main(n_parallel=1, budget=1, n_rl_itr=1, n_cont_samples=10, seed=0,
                       discount=discount,
                       discount_delta=0.,
                       fixed_alpha=alpha,
-                      buffer_batch_size=4096,
+                      buffer_batch_size=2048,
                       reward_scale=1.,)
 
         sac.to()

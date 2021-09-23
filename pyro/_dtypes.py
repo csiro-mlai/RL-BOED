@@ -731,7 +731,12 @@ class EpisodeBatch(TimeStepBatch):
                 {k: v[start:stop]
                  for (k, v) in self.agent_infos.items()},
                 'step_types':
-                self.step_types[start:stop]
+                self.step_types[start:stop],
+                'masks':
+                self.masks[start:stop],
+                'next_masks':
+                torch.cat([self.masks[1 + start:stop],
+                           self.last_masks[i].unsqueeze(0)])
             })
         return episodes
 

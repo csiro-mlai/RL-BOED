@@ -130,6 +130,7 @@ def main(num_steps, num_parallel, experiment_name, typs, seed, lengthscale,
         theta_mu = torch.zeros(num_parallel, 1, k, design_dim)
         theta_sig = torch.ones(num_parallel, 1, k, design_dim)
         theta_0 = torch.distributions.Normal(theta_mu, theta_sig).sample()
+        logging.info(f"theta_0 {theta_0}")
 
         true_model = pyro.condition(
             make_source_model(theta_mu, theta_sig, observation_sd),
@@ -137,8 +138,8 @@ def main(num_steps, num_parallel, experiment_name, typs, seed, lengthscale,
         if estimate_eig:
             print("estimate_eig")
             data = joblib.load(policy_src)
-            eval_env = data['env'].env.env
-            eval_env.l = int(1e4)
+            eval_env = data['env'].env
+            eval_env.l = int(1e7)
             eval_env.reset(n_parallel=num_parallel)
             spce = 0
 
@@ -148,8 +149,9 @@ def main(num_steps, num_parallel, experiment_name, typs, seed, lengthscale,
         for step in range(num_steps):
             logging.info("Step {}".format(step))
             model = make_source_model(theta_mu, theta_sig, observation_sd)
-            results = {'typ': typ, 'step': step, 'git-hash': get_git_revision_hash(), 'seed': seed,
-                       'lengthscale': lengthscale, 'observation_sd': observation_sd,
+            results = {'typ': typ, 'step': step, 'lengthscale': lengthscale,
+                       'git-hash': get_git_revision_hash(), 'seed': seed,
+                        'observation_sd': observation_sd, 'theta_0': theta_0,
                        'num_gradient_steps': num_gradient_steps, 'num_samples': num_samples,
                        'num_contrast_samples': num_contrast_samples, 'num_acquisition': num_acquisition}
 
@@ -249,7 +251,7 @@ if __name__ == "__main__":
     parser.add_argument("--num-samples", default=10, type=int)
     parser.add_argument("--num-contrast-samples", default=10, type=int)
     parser.add_argument("--num-acquisition", default=8, type=int)
-    parser.add_argument("--observation-sd", default=0.005, type=float)
+    parser.add_argument("--observation-sd", default=0.5, type=float)
     parser.add_argument("--policy-src", default="", type=str)
     parser.add_argument("--estimate-eig", dest="estimate_eig",
                         action='store_true')

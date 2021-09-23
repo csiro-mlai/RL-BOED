@@ -204,7 +204,9 @@ class SAC(RLAlgorithm):
                              action=path['actions'],
                              reward=path['rewards'].reshape(-1, 1),
                              next_observation=path['next_observations'],
-                             terminal=path['step_types'].reshape(-1, 1)))
+                             terminal=path['step_types'].reshape(-1, 1),
+                             mask=path['masks'],
+                             next_mask=path['next_masks'],))
                     path_returns.append(sum(path['rewards']))
                 assert len(path_returns) == len(trainer.step_episode)
                 allrets = torch.tensor(
@@ -358,10 +360,11 @@ class SAC(RLAlgorithm):
 
         """
         obs = samples_data['observation']
+        mask = samples_data['mask']
         with torch.no_grad():
             alpha = self._get_log_alpha(samples_data).exp()
-        min_q_new_actions = torch.min(self._qf1(obs, new_actions),
-                                      self._qf2(obs, new_actions))
+        min_q_new_actions = torch.min(self._qf1(obs, new_actions, mask),
+                                      self._qf2(obs, new_actions, mask))
         policy_objective = ((alpha * log_pi_new_actions) -
                             min_q_new_actions.flatten()).mean()
         return policy_objective
@@ -393,22 +396,24 @@ class SAC(RLAlgorithm):
         rewards = samples_data['reward'].flatten()
         terminals = samples_data['terminal'].flatten()
         next_obs = samples_data['next_observation']
+        mask = samples_data['mask']
+        next_mask = samples_data['next_mask']
         with torch.no_grad():
             alpha = self._get_log_alpha(samples_data).exp()
 
-        q1_pred = self._qf1(obs, actions)
-        q2_pred = self._qf2(obs, actions)
+        q1_pred = self._qf1(obs, actions, mask)
+        q2_pred = self._qf2(obs, actions, mask)
 
-        new_next_actions_dist = self.policy(next_obs)[0]
+        new_next_actions_dist = self.policy(next_obs, mask)[0]
         new_next_actions_pre_tanh, new_next_actions = (
             new_next_actions_dist.rsample_with_pre_tanh_value())
         new_log_pi = new_next_actions_dist.log_prob(
             value=new_next_actions, pre_tanh_value=new_next_actions_pre_tanh)
 
         target_q_values = torch.min(
-            self._target_qf1(next_obs, new_next_actions),
-            self._target_qf2(
-                next_obs, new_next_actions)).flatten() - (alpha * new_log_pi)
+            self._target_qf1(next_obs, new_next_actions, next_mask),
+            self._target_qf2(next_obs, new_next_actions, next_mask)
+        ).flatten() - (alpha * new_log_pi)
         with torch.no_grad():
             q_target = rewards * self._reward_scale + (
                 1. - terminals) * self._discount * target_q_values
@@ -450,17 +455,19 @@ class SAC(RLAlgorithm):
 
         """
         obs = samples_data['observation']
-        qf1_loss, qf2_loss = self._critic_objective(samples_data)
+        mask = samples_data['mask']
+        # train critic
+        for _ in range(10):
+            qf1_loss, qf2_loss = self._critic_objective(samples_data)
+            self._qf1_optimizer.zero_grad()
+            qf1_loss.backward()
+            self._qf1_optimizer.step()
+            self._qf2_optimizer.zero_grad()
+            qf2_loss.backward()
+            self._qf2_optimizer.step()
 
-        self._qf1_optimizer.zero_grad()
-        qf1_loss.backward()
-        self._qf1_optimizer.step()
-
-        self._qf2_optimizer.zero_grad()
-        qf2_loss.backward()
-        self._qf2_optimizer.step()
-
-        action_dists = self.policy(obs)[0]
+        # train actor
+        action_dists = self.policy(obs, mask)[0]
         new_actions_pre_tanh, new_actions = (
             action_dists.rsample_with_pre_tanh_value())
         log_pi_new_actions = action_dists.log_prob(
@@ -473,6 +480,7 @@ class SAC(RLAlgorithm):
 
         self._policy_optimizer.step()
 
+        # train temperature
         if self._use_automatic_entropy_tuning:
             alpha_loss = self._temperature_objective(log_pi_new_actions,
                                                      samples_data)
