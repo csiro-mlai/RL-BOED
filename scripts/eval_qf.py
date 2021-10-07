@@ -38,7 +38,7 @@ def pad_obs(maxlen, obs):
 
 
 def main(src, n_contrastive_samples, n_parallel, seq_length, seed, bound_type,
-         myopic):
+         myopic, dest):
     # set up environment
     if torch.cuda.is_available():
         torch.set_default_tensor_type('torch.cuda.FloatTensor')
@@ -60,6 +60,7 @@ def main(src, n_contrastive_samples, n_parallel, seq_length, seed, bound_type,
     env.env.bound_type = bound_type
 
     errs1, errs2, errsmin = [], [], []
+    est_qs, pred_qs = [], []
     obs, _ = env.reset(n_parallel=n_parallel)
     for j in range(0, seq_length):
         print(f"begin {j}th timestep")
@@ -73,6 +74,9 @@ def main(src, n_contrastive_samples, n_parallel, seq_length, seed, bound_type,
         errs1.append([])
         errs2.append([])
         errsmin.append([])
+        est_qs.append([])
+        pred_qs.append([])
+
 
         # for trajectory i at timestep j, generate n subtrajectories from j to T
         for i in range(n_parallel):
@@ -106,13 +110,15 @@ def main(src, n_contrastive_samples, n_parallel, seq_length, seed, bound_type,
             q1_pred = qf1(padded_obs, reshaped_act).squeeze()
             q2_pred = qf2(padded_obs, reshaped_act).squeeze()
             qmin_pred = torch.min(q1_pred, q2_pred)
+            pred_qs[-1].append(qmin_pred.detach())
+            est_qs[-1].append(true_q)
             # print(true_q.item(),
             #       qf1(padded_obs, reshaped_act, mask).squeeze().item(),
             #       qf1(cur_obs[i:i+1], reshaped_act).squeeze().item(),
             #       qf1(padded_obs, reshaped_act).squeeze().item())
-            errs1[-1].append(loss_fn(q1_pred, true_q))
-            errs2[-1].append(loss_fn(q2_pred, true_q))
-            errsmin[-1].append(loss_fn(qmin_pred, true_q))
+            # errs1[-1].append(loss_fn(q1_pred, true_q))
+            # errs2[-1].append(loss_fn(q2_pred, true_q))
+            # errsmin[-1].append(loss_fn(qmin_pred, true_q))
 
         # advance trajectories to the next timestep
         set_state(env.env, cur_hist, cur_logprod, cur_last_logsumprod)
@@ -120,18 +126,26 @@ def main(src, n_contrastive_samples, n_parallel, seq_length, seed, bound_type,
         es = env.step(cur_act)
         obs, rew = es.observation, es.reward
 
-    errs1 = torch.tensor(errs1).cpu().numpy()
-    errs2 = torch.tensor(errs2).cpu().numpy()
-    errsmin = torch.tensor(errsmin).cpu().numpy()
-    print("qf1 error: ")
-    print(f"mean = {errs1.mean(axis=1)}\t SD = {errs1.std()} \n"
-          f"median = {np.percentile(errs1, 50)}")
-    print("qf2 error: ")
-    print(f"mean = {errs2.mean(axis=1)}\t SD = {errs2.std()} \n"
-          f"median = {np.percentile(errs2, 50)}")
-    print("qfmin error: ")
-    print(f"mean = {errsmin.mean(axis=1)}\t SD = {errsmin.std()} \n"
-          f"median = {np.percentile(errsmin, 50)}")
+    pred_qs = torch.tensor(pred_qs).cpu().numpy()
+    est_qs = torch.tensor(est_qs).cpu().numpy()
+    sq_err = np.square(pred_qs - est_qs)
+    np.savez_compressed(dest, pred_qs=pred_qs, est_qs=est_qs, sq_err=sq_err)
+    print(f"mean Q = {est_qs.mean(axis=-1)}")
+    print(f"mean pred = {pred_qs.mean(axis=-1)}")
+    print(f"mse = {sq_err.mean(axis=-1)}")
+    print(f"se sd = {sq_err.std(axis=-1)}")
+    # errs1 = torch.tensor(errs1).cpu().numpy()
+    # errs2 = torch.tensor(errs2).cpu().numpy()
+    # errsmin = torch.tensor(errsmin).cpu().numpy()
+    # print("qf1 error: ")
+    # print(f"mean = {errs1.mean(axis=1)}\t SD = {errs1.std()} \n"
+    #       f"median = {np.percentile(errs1, 50)}")
+    # print("qf2 error: ")
+    # print(f"mean = {errs2.mean(axis=1)}\t SD = {errs2.std()} \n"
+    #       f"median = {np.percentile(errs2, 50)}")
+    # print("qfmin error: ")
+    # print(f"mean = {errsmin.mean(axis=1)}\t SD = {errsmin.std()} \n"
+    #       f"median = {np.percentile(errsmin, 50)}")
 
 
 if __name__ == "__main__":
@@ -152,4 +166,4 @@ if __name__ == "__main__":
     bound_type = {
         "lower": LOWER, "upper": UPPER, "terminal": TERMINAL}[args.bound_type]
     main(args.src, args.n_contrastive_samples, args.n_parallel, args.seq_length,
-         args.seed, bound_type, args.myopic)
+         args.seed, bound_type, args.myopic, args.dest)

@@ -212,12 +212,6 @@ class SAC(RLAlgorithm):
                 allrets = torch.tensor(
                     [path["rewards"].sum() for path in trainer.step_episode]
                 ).cpu().numpy()
-                mean_std = torch.stack(
-                    [p["agent_infos"]["log_std"] for p in trainer.step_episode]
-                ).exp().mean(dim=(0, 1)).cpu().numpy()
-                mean_mean = torch.stack(
-                    [p["agent_infos"]["mean"] for p in trainer.step_episode]
-                ).mean(dim=(0, 1)).cpu().numpy()
                 allact = torch.cat(
                     [path["actions"] for path in trainer.step_episode]
                 ).cpu().numpy()
@@ -242,8 +236,16 @@ class SAC(RLAlgorithm):
             tabular.record("Return/MaxReturn", allrets.max())
             tabular.record("Return/MinReturn", allrets.min())
             tabular.record("Policy/Discount", self._discount)
-            tabular.record("Policy/MeanStd", mean_std)
-            tabular.record("Policy/Mean", mean_mean)
+            if "log_std" in trainer.step_episode[0]["agent_infos"]:
+                mean_std = torch.stack(
+                    [p["agent_infos"]["log_std"] for p in trainer.step_episode]
+                ).exp().mean(dim=(0, 1)).cpu().numpy()
+                tabular.record("Policy/MeanStd", mean_std)
+            if "mean" in trainer.step_episode[0]["agent_infos"]:
+                mean_mean = torch.stack(
+                    [p["agent_infos"]["mean"] for p in trainer.step_episode]
+                ).mean(dim=(0, 1)).cpu().numpy()
+                tabular.record("Policy/Mean", mean_mean)
             tabular.record("Action/MeanAction", allact.mean(axis=0))
             tabular.record("Action/StdAction", allact.std(axis=0))
             trainer.step_itr += 1
@@ -269,7 +271,7 @@ class SAC(RLAlgorithm):
         if self.replay_buffer.n_transitions_stored >= self._min_buffer_size:
             samples = self.replay_buffer.sample_transitions(
                 self._buffer_batch_size)
-            samples = as_torch_dict(samples)
+            # samples = as_torch_dict(samples)
             policy_loss, qf1_loss, qf2_loss = self.optimize_policy(samples)
             self._update_targets()
 
@@ -404,15 +406,19 @@ class SAC(RLAlgorithm):
         q1_pred = self._qf1(obs, actions, mask)
         q2_pred = self._qf2(obs, actions, mask)
 
-        new_next_actions_dist = self.policy(next_obs, mask)[0]
-        new_next_actions_pre_tanh, new_next_actions = (
-            new_next_actions_dist.rsample_with_pre_tanh_value())
-        new_log_pi = new_next_actions_dist.log_prob(
-            value=new_next_actions, pre_tanh_value=new_next_actions_pre_tanh)
+        next_action_dist = self.policy(next_obs, mask)[0]
+        if hasattr(next_action_dist, 'rsample_with_pre_tanh_value'):
+            next_actions_pre_tanh, next_actions = (
+                next_action_dist.rsample_with_pre_tanh_value())
+            new_log_pi = next_action_dist.log_prob(
+                value=next_actions, pre_tanh_value=next_actions_pre_tanh)
+        else:
+            next_actions = next_action_dist.rsample()
+            new_log_pi = next_action_dist.log_prob(next_actions)
 
         target_q_values = torch.min(
-            self._target_qf1(next_obs, new_next_actions, next_mask),
-            self._target_qf2(next_obs, new_next_actions, next_mask)
+            self._target_qf1(next_obs, next_actions, next_mask),
+            self._target_qf2(next_obs, next_actions, next_mask)
         ).flatten() - (alpha * new_log_pi)
         with torch.no_grad():
             q_target = rewards * self._reward_scale + (
@@ -457,22 +463,24 @@ class SAC(RLAlgorithm):
         obs = samples_data['observation']
         mask = samples_data['mask']
         # train critic
-        for _ in range(10):
-            qf1_loss, qf2_loss = self._critic_objective(samples_data)
-            self._qf1_optimizer.zero_grad()
-            qf1_loss.backward()
-            self._qf1_optimizer.step()
-            self._qf2_optimizer.zero_grad()
-            qf2_loss.backward()
-            self._qf2_optimizer.step()
+        qf1_loss, qf2_loss = self._critic_objective(samples_data)
+        self._qf1_optimizer.zero_grad()
+        qf1_loss.backward()
+        self._qf1_optimizer.step()
+        self._qf2_optimizer.zero_grad()
+        qf2_loss.backward()
+        self._qf2_optimizer.step()
 
         # train actor
         action_dists = self.policy(obs, mask)[0]
-        new_actions_pre_tanh, new_actions = (
-            action_dists.rsample_with_pre_tanh_value())
-        log_pi_new_actions = action_dists.log_prob(
-            value=new_actions, pre_tanh_value=new_actions_pre_tanh)
-
+        if hasattr(action_dists, 'rsample_with_pre_tanh_value'):
+            new_actions_pre_tanh, new_actions = (
+                action_dists.rsample_with_pre_tanh_value())
+            log_pi_new_actions = action_dists.log_prob(
+                value=new_actions, pre_tanh_value=new_actions_pre_tanh)
+        else:
+            new_actions = action_dists.rsample()
+            log_pi_new_actions = action_dists.log_prob(new_actions)
         policy_loss = self._actor_objective(samples_data, new_actions,
                                             log_pi_new_actions)
         self._policy_optimizer.zero_grad()

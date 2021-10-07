@@ -201,6 +201,7 @@ class PreyModel(ExperimentModel):
         def model(design):
             if is_bad(design):
                 raise ArithmeticError("bad design, contains nan or inf")
+            design = design.float()
             batch_shape = design.shape[:-2]
             with ExitStack() as stack:
                 for plate in iter_plates_to_shape(batch_shape):

@@ -86,3 +86,7 @@ class BatchBox(Box):
                (self.shape == other.shape) and \
                torch.allclose(self.low, other.low) and \
                torch.allclose(self.high, other.high)
+
+    @property
+    def is_discrete(self):
+        return False

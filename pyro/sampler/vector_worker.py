@@ -37,7 +37,9 @@ class VectorWorker(DefaultWorker):
         pad_shape[1] = self._max_episode_length - pad_shape[1]
         pad = torch.zeros(pad_shape)
         padded_obs = torch.cat([obs, pad], dim=1)
-        mask = torch.cat([torch.ones_like(obs), pad], dim=1)[..., :1]
+        mask = torch.cat(
+            [torch.ones_like(obs, dtype=torch.bool),
+             torch.zeros_like(pad, dtype=torch.bool)], dim=1)[..., :1]
         return padded_obs, mask
 
 

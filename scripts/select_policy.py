@@ -29,6 +29,7 @@ def main(src, results, dest, n_contrastive_samples, n_parallel,
     torch.cuda.empty_cache()
     algo, env = data['algo'], data['env']
     pi = algo.policy
+    qf1, qf2 = algo._qf2, algo._qf2
     env.env.l = n_contrastive_samples
     env.env.n_parallel = n_parallel
     env.env.bound_type = bound_type
@@ -43,9 +44,9 @@ def main(src, results, dest, n_contrastive_samples, n_parallel,
             # print("\n", env.env.theta0['theta'][0, 0], "\n")
             rewards.append([])
             for i in range(seq_length):
-                # exp_obs = lexpand(obs, 100)
                 act, dist_info = pi.get_actions(obs)
-                # act = dist_info['mean']
+                # exp_obs = lexpand(obs, n_parallel)
+                # act, dist_info = pi.get_actions(exp_obs)
                 # opt_index = torch.argmax(
                 #     torch.min(qf1(exp_obs, act), qf2(exp_obs, act)),
                 #     dim=0,
@@ -125,7 +126,7 @@ if __name__ == "__main__":
     parser.add_argument("--n_parallel", default=1, type=int)
     parser.add_argument("--n_samples", default=100, type=int)
     parser.add_argument("--seq_length", default=20, type=int)
-    parser.add_argument("--edit_type", default="a", type=str)
+    parser.add_argument("--edit_type", default="w", type=str)
     parser.add_argument("--seed", default=1, type=int)
     parser.add_argument("--bound_type", default="lower", type=str.lower,
                         choices=["lower", "upper", "terminal"])

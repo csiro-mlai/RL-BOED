@@ -15,14 +15,15 @@ from pyro.algos import SAC
 from pyro.envs import AdaptiveDesignEnv, GymEnv, normalize
 from pyro.envs.adaptive_design_env import LOWER, UPPER, TERMINAL
 from pyro.experiment import Trainer
-from pyro.models.adaptive_experiment_model import SourceModel
-from pyro.policies.adaptive_tanh_gaussian_policy import \
-    AdaptiveTanhGaussianPolicy
+from pyro.models.adaptive_experiment_model import PreyModel
+from pyro.policies.adaptive_gumbel_softmax_policy import \
+    AdaptiveGumbelSoftmaxPolicy
 from pyro.q_functions.adaptive_mlp_q_function import AdaptiveMLPQFunction
 from pyro.replay_buffer import PathBuffer
 from pyro.sampler.local_sampler import LocalSampler
 from pyro.sampler.vector_worker import VectorWorker
 from pyro.spaces.batch_box import BatchBox
+from pyro.spaces.batch_discrete import BatchDiscrete
 from torch import nn
 from dowel import logger
 
@@ -32,7 +33,7 @@ seeds = [373693, 943929, 675273, 79387, 508137, 557390, 756177, 155183, 262598,
 
 def main(n_parallel=1, budget=1, n_rl_itr=1, n_cont_samples=10, seed=0,
          log_dir=None, snapshot_mode='gap', snapshot_gap=500, bound_type=LOWER,
-         src_filepath=None, discount=1., alpha=None, k=2, d=2, log_info=None,
+         src_filepath=None, discount=1., alpha=None, log_info=None,
          tau=5e-3, pi_lr=3e-4, qf_lr=3e-4, buffer_capacity=int(1e6)):
     if log_info is None:
         log_info = []
@@ -40,7 +41,7 @@ def main(n_parallel=1, budget=1, n_rl_itr=1, n_cont_samples=10, seed=0,
                      snapshot_gap=snapshot_gap)
     def sac_source(ctxt=None, n_parallel=1, budget=1, n_rl_itr=1,
                    n_cont_samples=10, seed=0, src_filepath=None, discount=1.,
-                   alpha=None, k=2, d=2, tau=5e-3, pi_lr=3e-4, qf_lr=3e-4,
+                   alpha=None,tau=5e-3, pi_lr=3e-4, qf_lr=3e-4,
                    buffer_capacity=int(1e6)):
         if log_info:
             logger.log(str(log_info))
@@ -72,27 +73,24 @@ def main(n_parallel=1, budget=1, n_rl_itr=1, n_cont_samples=10, seed=0,
         else:
             logger.log("creating new policy")
             layer_size = 128
-            design_space = BatchBox(low=-4., high=4., shape=(1, 1, 1, d))
-            obs_space = BatchBox(low=torch.as_tensor([-4.] * d + [-3.]),
-                                 high=torch.as_tensor([4.] * d + [10.])
-                                 )
-            model = SourceModel(n_parallel=n_parallel, d=d, k=k)
+            design_space = BatchDiscrete(floor=0, n=300, shape=(1,) * 4)
+            obs_space = BatchBox(low=0., high=300., shape=(2,))
+            model = PreyModel(n_parallel=n_parallel)
 
             def make_env(design_space, obs_space, model, budget, n_cont_samples,
-                         bound_type, true_model=None):
+                         bound_type):
                 env = GymEnv(
                     normalize(
                         AdaptiveDesignEnv(
                             design_space, obs_space, model, budget,
-                            n_cont_samples, true_model=true_model,
-                            bound_type=bound_type),
+                            n_cont_samples, bound_type=bound_type),
                         normalize_obs=True
                     )
                 )
                 return env
 
             def make_policy():
-                return AdaptiveTanhGaussianPolicy(
+                return AdaptiveGumbelSoftmaxPolicy(
                     env_spec=env.spec,
                     encoder_sizes=[layer_size, layer_size],
                     encoder_nonlinearity=nn.ReLU,
@@ -101,9 +99,9 @@ def main(n_parallel=1, budget=1, n_rl_itr=1, n_cont_samples=10, seed=0,
                     emitter_nonlinearity=nn.ReLU,
                     emitter_output_nonlinearity=None,
                     encoding_dim=layer_size//2,
-                    init_std=np.sqrt(1 / 3),
-                    min_std=np.exp(-20.),
-                    max_std=np.exp(0.),
+                    init_temp=1.,
+                    min_temp=np.exp(-20.),
+                    max_temp=10.,
                 )
 
             def make_q_func():
@@ -112,10 +110,10 @@ def main(n_parallel=1, budget=1, n_rl_itr=1, n_cont_samples=10, seed=0,
                     encoder_sizes=[layer_size, layer_size],
                     encoder_nonlinearity=nn.ReLU,
                     encoder_output_nonlinearity=None,
-                    emitter_sizes=[layer_size, layer_size],
+                    emitter_sizes=[2*layer_size, 2*layer_size],
                     emitter_nonlinearity=nn.ReLU,
                     emitter_output_nonlinearity=None,
-                    encoding_dim=layer_size//2
+                    encoding_dim=layer_size
                 )
 
             env = make_env(design_space, obs_space, model, budget,
@@ -152,10 +150,9 @@ def main(n_parallel=1, budget=1, n_rl_itr=1, n_cont_samples=10, seed=0,
         trainer.train(n_epochs=n_rl_itr, batch_size=n_parallel * budget)
 
     sac_source(n_parallel=n_parallel, budget=budget, n_rl_itr=n_rl_itr,
-               n_cont_samples=n_cont_samples, seed=seed,
-               src_filepath=src_filepath, discount=discount, alpha=alpha, k=k,
-               d=d, tau=tau, pi_lr=pi_lr, qf_lr=qf_lr,
-               buffer_capacity=buffer_capacity)
+               n_cont_samples=n_cont_samples, seed=seed, alpha=alpha, tau=tau,
+               src_filepath=src_filepath, discount=discount, pi_lr=pi_lr,
+               qf_lr=qf_lr, buffer_capacity=buffer_capacity)
 
     logger.dump_all()
 
@@ -164,8 +161,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--id", default="1", type=int)
     parser.add_argument("--n-parallel", default="100", type=int)
-    parser.add_argument("--budget", default="30", type=int)
-    parser.add_argument("--n-rl-itr", default="50", type=int)
+    parser.add_argument("--budget", default="25", type=int)
+    parser.add_argument("--n-rl-itr", default="1000", type=int)
     parser.add_argument("--n-contr-samples", default="10", type=int)
     parser.add_argument("--log-dir", default=None, type=str)
     parser.add_argument("--src-filepath", default=None, type=str)
@@ -175,8 +172,6 @@ if __name__ == "__main__":
                         choices=["lower", "upper", "terminal"])
     parser.add_argument("--discount", default="1", type=float)
     parser.add_argument("--alpha", default="-1", type=float)
-    parser.add_argument("--d", default="2", type=int)
-    parser.add_argument("--k", default="2", type=int)
     parser.add_argument("--tau", default="5e-3", type=float)
     parser.add_argument("--pi-lr", default="3e-4", type=float)
     parser.add_argument("--qf-lr", default="3e-4", type=float)
@@ -190,8 +185,8 @@ if __name__ == "__main__":
     log_info = f"input params: {vars(args)}"
     main(n_parallel=args.n_parallel, budget=args.budget, n_rl_itr=args.n_rl_itr,
          n_cont_samples=args.n_contr_samples, seed=seeds[exp_id - 1],
-         log_dir=args.log_dir, snapshot_mode=args.snapshot_mode,
+         log_dir=args.log_dir, snapshot_mode=args.snapshot_mode, tau=args.tau,
          snapshot_gap=args.snapshot_gap, bound_type=bound_type,
          src_filepath=args.src_filepath, discount=args.discount, alpha=alpha,
-         k=args.k, d=args.d, log_info=log_info, tau=args.tau, pi_lr=args.pi_lr,
-         qf_lr=args.qf_lr, buffer_capacity=buff_cap)
+         log_info=log_info, pi_lr=args.pi_lr, qf_lr=args.qf_lr,
+         buffer_capacity=buff_cap)

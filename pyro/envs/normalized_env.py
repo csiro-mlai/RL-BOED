@@ -2,6 +2,7 @@
 import gym
 import gym.spaces
 import gym.spaces.utils
+import pyro.spaces
 import torch
 
 from pyro.util import clip
@@ -161,6 +162,8 @@ class NormalizedEnv(gym.Wrapper):
                 scaled_action = clip(scaled_action, lb, ub)
             else:
                 scaled_action = action
+        elif isinstance(self.action_space, pyro.spaces.BatchDiscrete):
+            scaled_action = action + 1
         else:
             scaled_action = action
 

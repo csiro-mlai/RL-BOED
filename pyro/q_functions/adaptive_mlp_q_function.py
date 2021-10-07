@@ -4,6 +4,7 @@ import torch
 
 from garage.torch.modules import MLPModule
 from torch import nn
+import torch.nn.functional as F
 
 
 class AdaptiveMLPQFunction(nn.Module):
@@ -74,4 +75,6 @@ class AdaptiveMLPQFunction(nn.Module):
         if mask is not None:
             encoding = encoding * mask
         pooled_encoding = encoding.sum(dim=-2)
+        if self._env_spec.action_space.is_discrete and actions.shape[-1] == 1:
+            actions = F.one_hot(actions.squeeze(dim=-1), self._action_dim)
         return self._emitter.forward(torch.cat([pooled_encoding, actions], -1))
