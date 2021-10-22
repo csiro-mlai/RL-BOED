@@ -214,6 +214,7 @@ class PreyModel(ExperimentModel):
                         self.a_sig.expand(a_shape)
                     ).to_event(1)
                 )
+                a = a.expand(a.shape[:-1] + design.shape[-2:-1])
                 th_shape = batch_shape + self.th_mu.shape[-1:]
                 th = pyro.sample(
                     "th",
@@ -222,21 +223,21 @@ class PreyModel(ExperimentModel):
                         self.th_sig.expand(th_shape)
                     ).to_event(1)
                 )
+                th = th.expand(th.shape[:-1] + design.shape[-2:-1])
                 diff_func = partial(
                     holling3,
                     a.flatten(),
                     th.flatten())
-                with torch.no_grad():
-                    int_sol = odeint(
-                        diff_func,
-                        design.flatten(),
-                        torch.tensor([0., self.tau]),
-                        method="rk4",
-                        options={'step_size': None})
+                int_sol = odeint(
+                    diff_func,
+                    design.flatten(),
+                    torch.tensor([0., self.tau]),
+                    method="rk4",
+                    options={'step_size': 1.})
                 n_t = int_sol[-1].reshape(design.shape)
                 p_t = (design - n_t) / design
-                emission_dist = dist.Binomial(design.reshape(a_shape),
-                                              p_t.reshape(a_shape)).to_event(1)
+                emission_dist = dist.Binomial(design.reshape(a.shape),
+                                              p_t.reshape(a.shape)).to_event(1)
                 n = pyro.sample(
                     self.obs_label, emission_dist
                 )
