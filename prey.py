@@ -89,8 +89,7 @@ def main(num_steps, num_parallel, experiment_name, typs, seed,
         model = PreyModel(n_parallel=num_parallel)
         init_entropy = LogNormal(model.a_mu, model.a_sig).entropy() +\
                        LogNormal(model.th_mu, model.th_sig).entropy()
-        thetas = model.sample_theta(1)
-        true_theta = {k: v[0].clone() for k, v in thetas.items()}
+        true_theta = env.theta0
         d_stars = torch.tensor([])
         y_stars = torch.tensor([])
 
@@ -104,39 +103,44 @@ def main(num_steps, num_parallel, experiment_name, typs, seed,
             t = time.time()
             if typ == 'pce':
                 # Compute PCE for each possible design
-                # do this separately for num_parallel experiments
-                X = lexpand(torch.arange(1, 301), n_outer, num_parallel)
-                X = rexpand(X, 1, design_dim)
-                # make n_inner theta_l's and n_outer theta_0's
+                # do this separately for `num_parallel` experiments
+                # X = lexpand(torch.arange(1, 301), n_outer, num_parallel)
+                # X = rexpand(X, 1, design_dim)
+
+                # sample `n_inner` theta_l's and `n_outer` theta_0's
                 thetas = model.sample_theta(n_inner + n_outer)
-                for k, v in thetas.items():
-                    dims = list(v.shape)
-                    dims[-2] = 300
-                    thetas[k] = thetas[k].expand(dims)
+                # for k, v in thetas.items():
+                #     dims = list(v.shape)
+                #     dims[-2] = 300
+                #     thetas[k] = thetas[k].expand(dims)
                 theta0 = {k: v[:n_outer] for k, v in thetas.items()}
-                # generate n_outer y's from n_outer theta_0's
-                y = model.run_experiment(X, theta0)
-                # each y has its own theta0, and theta_l's are shared
-                theta_dict = {
-                    k:
-                    torch.stack(
-                        [torch.cat([v[i].unsqueeze(0), v[n_outer:]])
-                            for i in range(n_outer)],
-                        dim=1
-                    )
-                    for k, v in thetas.items()
-                }
-                log_probs = model.get_likelihoods(y, X, theta_dict)
-                # we can subtract constant log(L+1) and maintain order
-                rel_pce = log_probs[0] - torch.logsumexp(log_probs, dim=0)
+                pces = []
+                for i in range(1, 301):
+                    X = torch.ones(n_outer, num_parallel, 1, 1, design_dim) * i
+                    # generate `n_outer` samples from p(y, theta_0 | X)
+                    y = model.run_experiment(X, theta0)
+                    # each y has its own theta0, and theta_l's are shared
+                    theta_dict = {
+                        k:
+                        torch.stack(
+                            [torch.cat([v[i].unsqueeze(0), v[n_outer:]])
+                                for i in range(n_outer)],
+                            dim=1
+                        )
+                        for k, v in thetas.items()
+                    }
+                    log_probs = model.get_likelihoods(y, X, theta_dict)
+                    # we can subtract constant log(L+1) and maintain order
+                    rel_pce = log_probs[0] - torch.logsumexp(log_probs, dim=0)
+                    pces.append(rel_pce.mean(dim=0).squeeze())
+                pces = torch.stack(pces)
 
                 # pick the best design for each of num_parallel experiments
-                max_eig, d_star_index = rel_pce.mean(dim=0).max(dim=1)
+                max_eig, d_star_index = pces.max(dim=0)
                 max_eig += torch.tensor(n_inner + 1.).log()
                 logging.info('max EIG {}'.format(max_eig))
                 results['max EIG'] = max_eig
-                d_star = X[
-                    0, torch.arange(num_parallel), d_star_index].unsqueeze(-2)
+                d_star = d_star_index.reshape(-1, 1, 1, design_dim) + 1
 
             elif typ == 'rand':
                 d_star = torch.randint(1, 301, (num_parallel, 1, 1, design_dim))
@@ -181,8 +185,7 @@ def main(num_steps, num_parallel, experiment_name, typs, seed,
             logging.info(f'posterior learning time {time.time() - t}')
 
             # estimate EIG with sPCE
-            y_eval = env.model.run_experiment(d_star, env.theta0)
-            spce += env.get_reward(y_eval, d_star)
+            spce += env.get_reward(y_star, d_star)
             results['spce'] = spce
             logging.info(f"spce {spce} {spce.shape}")
             for k, v in results.items():

@@ -80,8 +80,9 @@ class AdaptiveDesignEnv(Env):
         # return False
 
     def get_reward(self, y, design):
-        log_probs = self.model.get_likelihoods(y, design, self.thetas
-                                               ).squeeze(dim=-1)
+        with torch.no_grad():
+            log_probs = self.model.get_likelihoods(
+                y, design, self.thetas).squeeze(dim=-1)
         log_prob0 = log_probs[0]
         if self.bound_type in [LOWER, TERMINAL]:
             # maximise lower bound
