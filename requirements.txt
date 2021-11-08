@@ -11,3 +11,4 @@ matplotlib~=3.3.3
 garage==2021.3.0
 dowel==0.0.3
 torchdiffeq
+rpy2
