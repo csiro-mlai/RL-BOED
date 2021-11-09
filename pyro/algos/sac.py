@@ -246,6 +246,11 @@ class SAC(RLAlgorithm):
                     [p["agent_infos"]["mean"] for p in trainer.step_episode]
                 ).mean(dim=(0, 1)).cpu().numpy()
                 tabular.record("Policy/Mean", mean_mean)
+            if "logits" in trainer.step_episode[0]["agent_infos"]:
+                mean_temp = torch.stack(
+                    [p["agent_infos"]["log_temp"] for p in trainer.step_episode]
+                ).exp().mean(dim=(0, 1)).cpu().numpy()
+                tabular.record("Policy/MeanTemp", mean_temp)
             tabular.record("Action/MeanAction", allact.mean(axis=0))
             tabular.record("Action/StdAction", allact.std(axis=0))
             trainer.step_itr += 1

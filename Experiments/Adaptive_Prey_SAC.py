@@ -39,7 +39,7 @@ def main(n_parallel=1, budget=1, n_rl_itr=1, n_cont_samples=10, seed=0,
         log_info = []
     @wrap_experiment(log_dir=log_dir, snapshot_mode=snapshot_mode,
                      snapshot_gap=snapshot_gap)
-    def sac_source(ctxt=None, n_parallel=1, budget=1, n_rl_itr=1,
+    def sac_prey(ctxt=None, n_parallel=1, budget=1, n_rl_itr=1,
                    n_cont_samples=10, seed=0, src_filepath=None, discount=1.,
                    alpha=None,tau=5e-3, pi_lr=3e-4, qf_lr=3e-4,
                    buffer_capacity=int(1e6)):
@@ -99,6 +99,7 @@ def main(n_parallel=1, budget=1, n_rl_itr=1, n_cont_samples=10, seed=0,
                     emitter_nonlinearity=nn.ReLU,
                     emitter_output_nonlinearity=None,
                     encoding_dim=layer_size//2,
+                    learn_temp=False,
                     init_temp=1.,
                     min_temp=np.exp(-20.),
                     max_temp=10.,
@@ -149,7 +150,7 @@ def main(n_parallel=1, budget=1, n_rl_itr=1, n_cont_samples=10, seed=0,
         trainer.setup(algo=sac, env=env)
         trainer.train(n_epochs=n_rl_itr, batch_size=n_parallel * budget)
 
-    sac_source(n_parallel=n_parallel, budget=budget, n_rl_itr=n_rl_itr,
+    sac_prey(n_parallel=n_parallel, budget=budget, n_rl_itr=n_rl_itr,
                n_cont_samples=n_cont_samples, seed=seed, alpha=alpha, tau=tau,
                src_filepath=src_filepath, discount=discount, pi_lr=pi_lr,
                qf_lr=qf_lr, buffer_capacity=buffer_capacity)
@@ -161,7 +162,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--id", default="1", type=int)
     parser.add_argument("--n-parallel", default="100", type=int)
-    parser.add_argument("--budget", default="25", type=int)
+    parser.add_argument("--budget", default="10", type=int)
     parser.add_argument("--n-rl-itr", default="1000", type=int)
     parser.add_argument("--n-contr-samples", default="10", type=int)
     parser.add_argument("--log-dir", default=None, type=str)

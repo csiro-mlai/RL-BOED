@@ -7,7 +7,6 @@ import numpy as np
 import torch
 
 from time import time
-from pyro.contrib.util import lexpand
 from pyro.envs.adaptive_design_env import LOWER, UPPER, TERMINAL
 from garage.experiment import deterministic
 
@@ -40,6 +39,7 @@ def main(src, results, dest, n_contrastive_samples, n_parallel,
     random = False
     if results is None:
         for j in range(rep):
+            print(f"iteration {j}")
             obs, _ = env.reset(n_parallel=n_parallel)
             # print("\n", env.env.theta0['theta'][0, 0], "\n")
             rewards.append([])

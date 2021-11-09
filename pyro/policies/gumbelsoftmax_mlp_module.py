@@ -168,10 +168,13 @@ class GumbelSoftmaxMLPBaseModule(nn.Module):
                 max=(None if self._max_temp_param is None else
                      self._max_temp_param.item()))
 
-        if self._temp_parameterization == 'exp':
-            temp = log_temp.exp()
+        if self._learn_temp:
+            if self._temp_parameterization == 'exp':
+                temp = log_temp.exp()
+            else:
+                temp = log_temp.exp().exp().add(1.).log()
         else:
-            temp = log_temp.exp().exp().add(1.).log()
+            temp = self._init_temp.exp() * torch.ones_like(log_temp)
         dist = GumbelSoftmax(temperature=temp, logits=logits)
 
         return dist

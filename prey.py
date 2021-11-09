@@ -92,12 +92,12 @@ def main(num_steps, num_parallel, experiment_name, typs, seed,
         true_theta = env.theta0
         d_stars = torch.tensor([])
         y_stars = torch.tensor([])
+        results = {'git-hash': get_git_revision_hash(), 'typ': typ,
+                   'seed': seed, 'n_inner': n_inner, 'true_theta': true_theta}
 
         for step in range(num_steps):
             logging.info("Step {}".format(step))
-            results = {'git-hash': get_git_revision_hash(), 'typ': typ,
-                       'step': step,  'seed': seed, 'n_inner': n_inner,
-                       'true_theta': true_theta}
+            results['step'] = step
 
             # Design phase
             t = time.time()
@@ -139,23 +139,23 @@ def main(num_steps, num_parallel, experiment_name, typs, seed,
                 max_eig, d_star_index = pces.max(dim=0)
                 max_eig += torch.tensor(n_inner + 1.).log()
                 logging.info('max EIG {}'.format(max_eig))
-                results['max EIG'] = max_eig
+                # results['max EIG'] = max_eig
                 d_star = d_star_index.reshape(-1, 1, 1, design_dim) + 1
 
             elif typ == 'rand':
                 d_star = torch.randint(1, 301, (num_parallel, 1, 1, design_dim))
 
-            results['rng_state'] = torch.get_rng_state()
+            # results['rng_state'] = torch.get_rng_state()
             elapsed = time.time() - t
             logging.info('elapsed design time {}'.format(elapsed))
 
             results['design_time'] = elapsed
-            results['d_star'] = d_star
+            results['d_star'] = d_star.int()
             logging.info('design {} {}'.format(d_star.squeeze(), d_star.shape))
             d_stars = torch.cat([d_stars, d_star], dim=-2)
             y_star = model.run_experiment(d_star, true_theta)
             y_stars = torch.cat([y_stars, y_star], dim=-1)
-            results['y'] = y_star
+            results['y'] = y_star.int()
             logging.info('ys {} {}'.format(y_stars.squeeze(), y_stars.shape))
 
             # learn posterior with VI
@@ -175,8 +175,8 @@ def main(num_steps, num_parallel, experiment_name, typs, seed,
 
                 logging.info("a_mu {} \n a_sig {} \n th_mu {} \n th_sig {}".format(
                     a_mu.squeeze(), a_sig.squeeze(), th_mu.squeeze(), th_sig.squeeze()))
-                results['a_mu'], results['a_sig'] = a_mu, a_sig
-                results['th_mu'], results['th_sig'] = th_mu, th_sig
+                # results['a_mu'], results['a_sig'] = a_mu, a_sig
+                # results['th_mu'], results['th_sig'] = th_mu, th_sig
                 model.a_mu, model.a_sig = a_mu, a_sig
                 model.th_mu, model.th_sig = th_mu, th_sig
                 entropy = LogNormal(model.a_mu, model.a_sig).entropy() +\
