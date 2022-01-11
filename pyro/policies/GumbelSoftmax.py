@@ -21,7 +21,7 @@ class GumbelSoftmax(RelaxedOneHotCategorical):
         soft = super(RelaxedOneHotCategorical, self).rsample(sample_shape)
         index = soft.argmax(dim=-1, keepdim=True)
         hard = torch.zeros_like(self.logits).scatter_(-1, index, 1.)
-        return hard - soft.detach() + soft
+        return (hard - soft).detach() + soft
 
     def log_prob(self, value):
         """value is one-hot or relaxed"""

@@ -78,8 +78,8 @@ class AdaptiveGumbelSoftmaxPolicy(StochasticPolicy):
                  output_b_init=nn.init.zeros_,
                  init_temp=1.0,
                  learn_temp=True,
-                 min_temp=np.exp(-20.),
-                 max_temp=np.exp(2.),
+                 min_temp=0.01,
+                 max_temp=10.,
                  temp_parameterization='exp',
                  layer_normalization=False):
         super().__init__(env_spec, name='AdaptiveGumbelSoftmaxPolicy')
