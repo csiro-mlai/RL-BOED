@@ -34,27 +34,16 @@ class PathBuffer:
         """
         if self._env_spec is None:
             self._env_spec = episodes.env_spec
-        env_spec = episodes.env_spec
-        obs_space = env_spec.observation_space
         for eps in episodes.split():
-            # terminals = np.array([
-            #     step_type for step_type in eps.step_types
-            # ],
-            #                      dtype=bool)
-            # path = {
-            #     'observations': obs_space.flatten_n(eps.observations),
-            #     'next_observations':
-            #     obs_space.flatten_n(eps.next_observations),
-            #     'actions': env_spec.action_space.flatten_n(eps.actions),
-            #     'rewards': eps.rewards.reshape(-1, 1),
-            #     'terminals': terminals.reshape(-1, 1),
-            # }
             path = dict(
                 observation=eps.observations,
+                mask=eps.masks,
                 action=eps.actions,
                 reward=eps.rewards.reshape(-1, 1),
                 next_observation=eps.next_observations,
-                terminal=eps.step_types.reshape(-1, 1))
+                next_mask=torch.cat(
+                    [eps.masks[1:], eps.last_masks.unsqueeze(dim=0)]),
+                terminal=eps.step_types.reshape(-1, 1),)
             self.add_path(path)
 
     def add_path(self, path):
@@ -140,9 +129,11 @@ class PathBuffer:
         return TimeStepBatch(env_spec=self._env_spec,
                              episode_infos={},
                              observations=samples['observation'],
+                             masks=samples['mask'],
                              actions=samples['action'],
                              rewards=samples['reward'].flatten(),
                              next_observations=samples['next_observation'],
+                             next_masks=samples['next_mask'],
                              step_types=samples['terminal'].flatten(),
                              env_infos={},
                              agent_infos={})

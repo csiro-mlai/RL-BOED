@@ -5,8 +5,8 @@ import argparse
 
 import joblib
 import torch
-import numpy as np
 
+from dowel import logger
 from garage.experiment import deterministic
 from garage.torch import set_gpu_mode
 from os import environ
@@ -25,7 +25,6 @@ from pyro.sampler.vector_worker import VectorWorker
 from pyro.spaces.batch_box import BatchBox
 from pyro.spaces.batch_discrete import BatchDiscrete
 from torch import nn
-from dowel import logger
 
 seeds = [373693, 943929, 675273, 79387, 508137, 557390, 756177, 155183, 262598,
          572185]
@@ -34,15 +33,16 @@ seeds = [373693, 943929, 675273, 79387, 508137, 557390, 756177, 155183, 262598,
 def main(n_parallel=1, budget=1, n_rl_itr=1, n_cont_samples=10, seed=0,
          log_dir=None, snapshot_mode='gap', snapshot_gap=500, bound_type=LOWER,
          src_filepath=None, discount=1., alpha=None, log_info=None,
-         tau=5e-3, pi_lr=3e-4, qf_lr=3e-4, buffer_capacity=int(1e6)):
+         tau=5e-3, pi_lr=3e-4, qf_lr=3e-4, buffer_capacity=int(1e6), temp=1.,
+         target_entropy=None, ens_size=2, M=2):
     if log_info is None:
         log_info = []
     @wrap_experiment(log_dir=log_dir, snapshot_mode=snapshot_mode,
                      snapshot_gap=snapshot_gap)
     def sac_prey(ctxt=None, n_parallel=1, budget=1, n_rl_itr=1,
-                   n_cont_samples=10, seed=0, src_filepath=None, discount=1.,
-                   alpha=None,tau=5e-3, pi_lr=3e-4, qf_lr=3e-4,
-                   buffer_capacity=int(1e6)):
+                 n_cont_samples=10, seed=0, src_filepath=None, discount=1.,
+                 alpha=None,tau=5e-3, pi_lr=3e-4, qf_lr=3e-4, ens_size=2,
+                 buffer_capacity=int(1e6), temp=1., target_entropy=None, M=2):
         if log_info:
             logger.log(str(log_info))
         if torch.cuda.is_available():
@@ -99,9 +99,9 @@ def main(n_parallel=1, budget=1, n_rl_itr=1, n_cont_samples=10, seed=0,
                     emitter_nonlinearity=nn.ReLU,
                     emitter_output_nonlinearity=None,
                     encoding_dim=layer_size//2,
-                    learn_temp=False,
-                    init_temp=1.,
-                    min_temp=np.exp(-20.),
+                    learn_temp=True,
+                    init_temp=temp,
+                    min_temp=0.01,
                     max_temp=10.,
                 )
 
@@ -120,8 +120,7 @@ def main(n_parallel=1, budget=1, n_rl_itr=1, n_cont_samples=10, seed=0,
             env = make_env(design_space, obs_space, model, budget,
                            n_cont_samples, bound_type)
             policy = make_policy()
-            qf1 = make_q_func()
-            qf2 = make_q_func()
+            qfs = [make_q_func() for _ in range(ens_size)]
             replay_buffer = PathBuffer(capacity_in_transitions=buffer_capacity)
             sampler = LocalSampler(agents=policy, envs=env,
                                    max_episode_length=budget,
@@ -129,8 +128,7 @@ def main(n_parallel=1, budget=1, n_rl_itr=1, n_cont_samples=10, seed=0,
 
             sac = SAC(env_spec=env.spec,
                       policy=policy,
-                      qf1=qf1,
-                      qf2=qf2,
+                      qfs=qfs,
                       replay_buffer=replay_buffer,
                       sampler=sampler,
                       max_episode_length_eval=budget,
@@ -142,8 +140,10 @@ def main(n_parallel=1, budget=1, n_rl_itr=1, n_cont_samples=10, seed=0,
                       discount=discount,
                       discount_delta=0.,
                       fixed_alpha=alpha,
-                      buffer_batch_size=4096,
-                      reward_scale=1.,)
+                      target_entropy=target_entropy,
+                      buffer_batch_size=1024,
+                      reward_scale=1.,
+                      M=M)
 
         sac.to()
         trainer = Trainer(snapshot_config=ctxt)
@@ -151,9 +151,10 @@ def main(n_parallel=1, budget=1, n_rl_itr=1, n_cont_samples=10, seed=0,
         trainer.train(n_epochs=n_rl_itr, batch_size=n_parallel * budget)
 
     sac_prey(n_parallel=n_parallel, budget=budget, n_rl_itr=n_rl_itr,
-               n_cont_samples=n_cont_samples, seed=seed, alpha=alpha, tau=tau,
-               src_filepath=src_filepath, discount=discount, pi_lr=pi_lr,
-               qf_lr=qf_lr, buffer_capacity=buffer_capacity)
+             n_cont_samples=n_cont_samples, seed=seed, alpha=alpha, tau=tau,
+             src_filepath=src_filepath, discount=discount, pi_lr=pi_lr,
+             qf_lr=qf_lr, buffer_capacity=buffer_capacity, temp=temp, M=M,
+             target_entropy=target_entropy, ens_size=ens_size)
 
     logger.dump_all()
 
@@ -177,11 +178,16 @@ if __name__ == "__main__":
     parser.add_argument("--pi-lr", default="3e-4", type=float)
     parser.add_argument("--qf-lr", default="3e-4", type=float)
     parser.add_argument("--buffer-capacity", default="1e6", type=float)
+    parser.add_argument("--temp", default="1", type=float)
+    parser.add_argument("--target-entropy", default="-1", type=float)
+    parser.add_argument("--ens-size", default="2", type=int)
+    parser.add_argument("--M", default="2", type=int)
     args = parser.parse_args()
     bound_type_dict = {"lower": LOWER, "upper": UPPER, "terminal": TERMINAL}
     bound_type = bound_type_dict[args.bound_type]
     exp_id = args.id
     alpha = args.alpha if args.alpha >= 0 else None
+    target_entropy = args.target_entropy if args.target_entropy >= 0 else None
     buff_cap = int(args.buffer_capacity)
     log_info = f"input params: {vars(args)}"
     main(n_parallel=args.n_parallel, budget=args.budget, n_rl_itr=args.n_rl_itr,
@@ -189,5 +195,6 @@ if __name__ == "__main__":
          log_dir=args.log_dir, snapshot_mode=args.snapshot_mode, tau=args.tau,
          snapshot_gap=args.snapshot_gap, bound_type=bound_type,
          src_filepath=args.src_filepath, discount=args.discount, alpha=alpha,
-         log_info=log_info, pi_lr=args.pi_lr, qf_lr=args.qf_lr,
-         buffer_capacity=buff_cap)
+         log_info=log_info, pi_lr=args.pi_lr, qf_lr=args.qf_lr, temp=args.temp,
+         buffer_capacity=buff_cap, target_entropy=target_entropy, M=args.M,
+         ens_size=args.ens_size)

@@ -2,6 +2,8 @@
 
 This policy chooses the action that yields to the largest Q-value.
 """
+import random
+
 import torch
 
 from garage.torch.policies.policy import Policy
@@ -19,12 +21,18 @@ class AdaptiveArgmaxPolicy(Policy):
         name (str): Name of this policy.
     """
 
-    def __init__(self, qf, env_spec, name='AdaptiveArgmaxPolicy'):
+    def __init__(self, qfs, env_spec, name='AdaptiveArgmaxPolicy',
+                 deep_exp=False):
         super().__init__(env_spec, name)
-        self._qf = qf
+        self._qfs = qfs
+        if deep_exp:
+            assert isinstance(self._qfs, list), "attempted deep exploration " \
+                                                "without ensemble"
+            self._weights = self.stochastic_vector()
+        self._deep_exp = deep_exp
 
     # pylint: disable=arguments-differ
-    def forward(self, observations, masks=None):
+    def forward(self, observations, masks=None, deep_exp=False):
         """Get actions corresponding to a batch of observations.
 
         Args:
@@ -36,8 +44,17 @@ class AdaptiveArgmaxPolicy(Policy):
         Returns:
             torch.Tensor: Batch of actions of shape :math:`(N, A)`
         """
-        qs = self._qf(observations, masks)
-        return torch.argmax(qs, dim=1, keepdim=True) + 1.
+        if deep_exp:
+            qs = torch.sum(
+                self._weights * torch.stack(
+                    [q(observations, masks) for q in self._qfs], dim=-1),
+                dim=-1)
+        elif isinstance(self._qfs, list):
+            qs = torch.mean(
+                torch.stack([q(observations, masks) for q in self._qfs]), dim=0)
+        else:
+            qs = self._qfs(observations, masks)
+        return torch.argmax(qs, dim=1, keepdim=True)
 
     def get_action(self, observation, mask=None):
         """Get a single action given an observation.
@@ -65,4 +82,12 @@ class AdaptiveArgmaxPolicy(Policy):
             dict: Empty since this policy does not produce a distribution.
         """
         with torch.no_grad():
-            return self(observations, masks), dict()
+            return self(observations, masks, self._deep_exp), dict()
+
+    def reset(self, do_resets=None):
+        if self._deep_exp:
+            self._weights = self.stochastic_vector()
+
+    def stochastic_vector(self):
+        vec = torch.rand(len(self._qfs)) + 1e-9
+        return vec / vec.sum()
