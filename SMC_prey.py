@@ -52,6 +52,7 @@ def main(num_steps, num_reps, experiment_name, output_dir, seed, loglevel):
 
     for rep in range(num_reps):
         r.source('scripts/R/SMC_setup.R')
+        r(f'I <- {num_steps}')
         r(f'set.seed({seed+rep})')
         print(f"Begin {rep}th replicate")
         rep_name = experiment_name + f"_{rep}"
