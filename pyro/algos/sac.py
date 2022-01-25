@@ -237,8 +237,8 @@ class SAC(RLAlgorithm):
                 mean_ent = log_stds.mean().cpu().numpy() + \
                     0.5 + 0.5 * np.log(2 * np.pi)
                 if self._use_automatic_entropy_tuning:
-                    # self._target_entropy -= 1 / 5e3
-                    self._target_entropy -= 1 / 1.4e4
+                    self._target_entropy -= 1 / 5e3
+                    # self._target_entropy -= 1 / 1.4e4
             if "mean" in trainer.step_episode[0]["agent_infos"]:
                 mean_mean = torch.stack(
                     [p["agent_infos"]["mean"] for p in trainer.step_episode]
