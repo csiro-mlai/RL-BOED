@@ -78,8 +78,12 @@ class CensoredSigmoidNormal(TorchDistribution):
         shape = self.base_dist.batch_shape
         asymptotic_upper = self.base_dist.log_prob(self.upper_lim.expand(shape)) - \
             (crit+self.z(self.upper_lim).abs()).log()
+        if is_bad(asymptotic_upper[mask_upper]):
+            raise ArithmeticError("NaN in asymptotic upper")
         asymptotic_lower = self.base_dist.log_prob(self.lower_lim.expand(shape)) - \
             (crit+self.z(self.lower_lim).abs()).log()
+        if is_bad(asymptotic_lower[mask_lower]):
+            raise ArithmeticError("NaN in asymptotic lower")
         upper_cdf[mask_upper] = 1.
         upper_cdf = upper_cdf.log()
         upper_cdf[mask_upper] = asymptotic_upper[mask_upper]

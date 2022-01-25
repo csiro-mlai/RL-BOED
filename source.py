@@ -170,8 +170,6 @@ def main(num_steps, num_parallel, experiment_name, typs, seed, lengthscale,
                 loss = neg_loss(eig_loss)
 
                 constraint = torch.distributions.constraints.interval(-8., 8.)
-                # xi_init = .01 + 99.99 * torch.rand((num_parallel, num_acquisition, 1, design_dim // 2))
-                # xi_init = torch.cat([xi_init, xi_init], dim=-1)
                 xi_init = -8 + 16 * torch.rand((num_parallel, num_acquisition, 1, design_dim))
                 logging.info('init_design {} {}'.format(xi_init.squeeze(), xi_init.shape))
                 pyro.param("xi", xi_init, constraint=constraint)
