@@ -14,7 +14,7 @@ from contextlib import ExitStack
 from functools import partial
 from pyro.contrib.oed.eig import elbo_learn
 from pyro.contrib.util import iter_plates_to_shape, lexpand, rexpand
-from pyro.envs.adaptive_design_env import AdaptiveDesignEnv
+from pyro.envs.adaptive_design_env import AdaptiveDesignEnv, UPPER, LOWER
 from pyro.models.adaptive_experiment_model import PreyModel
 from torch.distributions import LogNormal
 
@@ -80,27 +80,32 @@ def main(num_steps, num_parallel, experiment_name, typs, seed,
         elbo_n_samples, elbo_n_steps, elbo_lr = 10, 1000, 0.04
         design_dim = 1
 
-        env = AdaptiveDesignEnv(None, torch.zeros(2),
+        env_lower = AdaptiveDesignEnv(None, torch.zeros(2),
                                 PreyModel(n_parallel=num_parallel), num_steps,
-                                int(1e5))
-        env.reset(num_parallel)
-        spce = 0
+                                int(1e5), bound_type=LOWER)
+        env_upper = AdaptiveDesignEnv(None, torch.zeros(2),
+                                PreyModel(n_parallel=num_parallel), num_steps,
+                                int(1e5), bound_type=UPPER)
+        env_lower.reset(num_parallel)
+        env_upper.reset(num_parallel)
+        spce, snmc = 0, 0
 
         model = PreyModel(n_parallel=num_parallel)
         init_entropy = LogNormal(model.a_mu, model.a_sig).entropy() +\
                        LogNormal(model.th_mu, model.th_sig).entropy()
-        true_theta = env.theta0
+        true_theta = env_lower.theta0
+        env_upper.theta0, env_upper.thetas = env_lower.theta0, env_lower.thetas
         d_stars = torch.tensor([])
         y_stars = torch.tensor([])
         results = {'git-hash': get_git_revision_hash(), 'typ': typ,
-                   'seed': seed, 'n_inner': n_inner, 'true_theta': true_theta}
+                   'seed': seed, 'n_inner': n_inner}
 
         for step in range(num_steps):
             logging.info("Step {}".format(step))
             results['step'] = step
 
             # Design phase
-            t = time.time()
+            t0 = time.time()
             if typ == 'pce':
                 # Compute PCE for each possible design
                 # do this separately for `num_parallel` experiments
@@ -139,14 +144,12 @@ def main(num_steps, num_parallel, experiment_name, typs, seed,
                 max_eig, d_star_index = pces.max(dim=0)
                 max_eig += torch.tensor(n_inner + 1.).log()
                 logging.info('max EIG {}'.format(max_eig))
-                # results['max EIG'] = max_eig
                 d_star = d_star_index.reshape(-1, 1, 1, design_dim) + 1
 
             elif typ == 'rand':
                 d_star = torch.randint(1, 301, (num_parallel, 1, 1, design_dim))
 
-            # results['rng_state'] = torch.get_rng_state()
-            elapsed = time.time() - t
+            elapsed = time.time() - t0
             logging.info('elapsed design time {}'.format(elapsed))
 
             results['design_time'] = elapsed
@@ -159,7 +162,7 @@ def main(num_steps, num_parallel, experiment_name, typs, seed,
             logging.info('ys {} {}'.format(y_stars.squeeze(), y_stars.shape))
 
             # learn posterior with VI
-            t = time.time()
+            t1 = time.time()
             if typ == 'pce':
                 model.reset(num_parallel)
                 prior = model.make_model()
@@ -175,19 +178,21 @@ def main(num_steps, num_parallel, experiment_name, typs, seed,
 
                 logging.info("a_mu {} \n a_sig {} \n th_mu {} \n th_sig {}".format(
                     a_mu.squeeze(), a_sig.squeeze(), th_mu.squeeze(), th_sig.squeeze()))
-                # results['a_mu'], results['a_sig'] = a_mu, a_sig
-                # results['th_mu'], results['th_sig'] = th_mu, th_sig
                 model.a_mu, model.a_sig = a_mu, a_sig
                 model.th_mu, model.th_sig = th_mu, th_sig
                 entropy = LogNormal(model.a_mu, model.a_sig).entropy() +\
                           LogNormal(model.th_mu, model.th_sig).entropy()
                 logging.info(f'EIG {(init_entropy - entropy).squeeze()}')
-            logging.info(f'posterior learning time {time.time() - t}')
+            results['time'] = time.time() - t0
+            logging.info(f'posterior learning time {time.time() - t1}')
 
             # estimate EIG with sPCE
-            spce += env.get_reward(y_star, d_star)
+            spce += env_lower.get_reward(y_star, d_star)
+            snmc += env_upper.get_reward(y_star, d_star)
             results['spce'] = spce
             logging.info(f"spce {spce} {spce.shape}")
+            results['snmc'] = snmc
+            logging.info(f"snmc {snmc} {snmc.shape}")
             for k, v in results.items():
                 if hasattr(v, "cpu"):
                     results[k] = v.cpu()

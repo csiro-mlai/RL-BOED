@@ -18,7 +18,7 @@ import torch
 import rpy2.robjects as robjects
 
 from pyro.contrib.util import rexpand
-from pyro.envs.adaptive_design_env import AdaptiveDesignEnv
+from pyro.envs.adaptive_design_env import AdaptiveDesignEnv, UPPER, LOWER
 from pyro.models.adaptive_experiment_model import PreyModel
 from pyro.util import set_rng_seed
 
@@ -46,7 +46,10 @@ def main(num_steps, num_reps, experiment_name, output_dir, seed, loglevel):
         set_rng_seed(seed)
 
     model = PreyModel(n_parallel=1)
-    env = AdaptiveDesignEnv(None, torch.zeros(2), model, num_steps, int(1e5))
+    env_lower = AdaptiveDesignEnv(None, torch.zeros(2), model, num_steps,
+                                  int(1e5), bound_type=LOWER)
+    env_upper = AdaptiveDesignEnv(None, torch.zeros(2), model, num_steps,
+                                  int(1e5), bound_type=UPPER)
     # setup R environment
     r = robjects.r
 
@@ -62,12 +65,14 @@ def main(num_steps, num_reps, experiment_name, output_dir, seed, loglevel):
             os.remove(results_file)
         except OSError:
             logging.info("File {} does not exist yet".format(results_file))
-        env.reset(1)
-        spce = 0
-        true_theta = env.theta0
+        env_lower.reset(1)
+        env_upper.reset(1)
+        spce, snmc = 0, 0
+        true_theta = env_lower.theta0
+        env_upper.theta0, env_upper.thetas = env_lower.theta0, env_lower.thetas
         d_stars = torch.tensor([])
         y_stars = torch.tensor([])
-        spces = torch.tensor([])
+        spces, snmcs = torch.tensor([]), torch.tensor([])
         results = {'git-hash': get_git_revision_hash(), 'typ': "SMC", 'seed': seed,
                    'true_theta': true_theta}
         # initiate R loop
@@ -99,12 +104,19 @@ def main(num_steps, num_reps, experiment_name, output_dir, seed, loglevel):
             r(f'data[i,2] <- {y_star.int().item()}')
             r.source("scripts/R/SMC_update.R")
             print(r["data"])
+            loop_time = time.time() - t
+            results['time'] = loop_time
 
             # estimate EIG with sPCE
-            spce += env.get_reward(y_star, d_star)
+            spce += env_lower.get_reward(y_star, d_star)
+            snmc += env_upper.get_reward(y_star, d_star)
             spces = torch.cat([spces, spce])
+            snmcs = torch.cat([snmcs, snmc])
             results['spces'] = spces
+            results['snmcs'] = snmcs
             logging.info(f"spce {spce} {spce.shape}")
+            logging.info(f"snmc {snmc} {snmc.shape}")
+
 
             # save results
             for k, v in results.items():

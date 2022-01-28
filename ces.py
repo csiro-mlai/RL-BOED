@@ -13,12 +13,13 @@ import torch
 
 from contextlib import ExitStack
 from functools import partial
+import pyro.contrib.gp as gp
 from pyro.contrib.oed.eig import elbo_learn, opt_eig_ape_loss
 from pyro.contrib.oed.differentiable_eig import differentiable_pce_eig
-from pyro.contrib.util import iter_plates_to_shape, lexpand
+from pyro.contrib.util import iter_plates_to_shape, lexpand, rmv
 from pyro.envs.adaptive_design_env import AdaptiveDesignEnv, UPPER, LOWER
 from pyro.models.adaptive_experiment_model import CESModel
-from torch.distributions import LogNormal, Dirichlet
+from torch.distributions import LogNormal, Dirichlet, transform_to
 
 
 # TODO read from torch float spec
@@ -67,7 +68,7 @@ def neg_loss(loss):
     return new_loss
 
 
-def main(num_steps, num_parallel, experiment_name, typs, seed,
+def main(num_steps, num_parallel, experiment_name, typs, seed, lengthscale,
          num_gradient_steps, num_samples, num_contrast_samples, num_acquisition,
          loglevel, policy_src):
     numeric_level = getattr(logging, loglevel.upper(), None)
@@ -97,6 +98,7 @@ def main(num_steps, num_parallel, experiment_name, typs, seed,
             seed = int(torch.rand(tuple()) * 2 ** 30)
             pyro.set_rng_seed(seed)
         elbo_n_samples, elbo_n_steps, elbo_lr = 10, 1000, 0.04
+        num_bo_steps = 4
         design_dim = 6
 
         env_lower = AdaptiveDesignEnv(None, torch.zeros(2),
@@ -128,7 +130,75 @@ def main(num_steps, num_parallel, experiment_name, typs, seed,
             logging.info("Step {}".format(step))
 
             # Design phase
-            t = time.time()
+            t0 = time.time()
+
+            if typ == 'bo':
+                grad_start_lr, grad_end_lr = 0.001, 0.001
+                noise = torch.tensor(0.2).pow(2)
+                constraint = torch.distributions.constraints.interval(1e-6, 100.)
+                X = .01 + 99.99 * torch.rand((num_parallel, num_acquisition, 1, design_dim))
+                eig_loss = lambda d, N, **kwargs: differentiable_pce_eig(
+                    model=model.make_model(), design=d, observation_labels=["y"],
+                    target_labels=["rho", "alpha", "u"],
+                    N=N, M=num_contrast_samples, **kwargs)
+                loss = neg_loss(eig_loss)
+                start_lr, end_lr = grad_start_lr, grad_end_lr
+                gamma = (end_lr / start_lr) ** (1 / num_gradient_steps)
+                scheduler = pyro.optim.ExponentialLR({
+                    'optimizer': torch.optim.Adam,
+                    'optim_args': {'lr': start_lr},
+                    'gamma': gamma})
+
+                def f(X):
+                    return opt_eig_ape_loss(
+                        X, eig_loss, num_samples=num_samples,
+                        num_steps=0, optim=scheduler,
+                        final_num_samples=500
+                    )
+
+                y = f(X).detach().clone()
+                kernel = gp.kernels.Matern52(input_dim=1, lengthscale=torch.tensor(lengthscale),
+                                             variance=y.var(unbiased=True))
+                X = X.squeeze(-2)
+
+                for i in range(num_bo_steps):
+                    Kff = kernel(X)
+                    Kff += noise * torch.eye(Kff.shape[-1])
+                    Lff = Kff.cholesky(upper=False)
+                    Xinit = .01 + 99.99 * torch.rand((num_parallel, num_acquisition, design_dim))
+                    unconstrained_Xnew = transform_to(constraint).inv(Xinit).detach().clone().requires_grad_(True)
+                    minimizer = torch.optim.LBFGS([unconstrained_Xnew], max_eval=20)
+
+                    def gp_ucb1():
+                        minimizer.zero_grad()
+                        Xnew = transform_to(constraint)(unconstrained_Xnew)
+                        # Xnew.register_hook(lambda x: print('Xnew grad', x))
+                        KXXnew = kernel(X, Xnew)
+                        LiK = torch.triangular_solve(KXXnew, Lff, upper=False)[0]
+                        Liy = torch.triangular_solve(y.unsqueeze(-1).clamp(max=20.), Lff, upper=False)[0]
+                        mean = rmv(LiK.transpose(-1, -2), Liy.squeeze(-1))
+                        KXnewXnew = kernel(Xnew)
+                        var = (KXnewXnew - LiK.transpose(-1, -2).matmul(LiK)).diagonal(dim1=-2, dim2=-1)
+                        ucb = -(mean + 2 * var.sqrt())
+                        loss = ucb.sum()
+                        torch.autograd.backward(unconstrained_Xnew,
+                                                torch.autograd.grad(loss, unconstrained_Xnew, retain_graph=True))
+                        return loss
+
+                    minimizer.step(gp_ucb1)
+                    X_acquire = transform_to(constraint)(unconstrained_Xnew).detach().clone()
+                    # print('X_acquire', X_acquire)
+                    y_acquire = f(X_acquire.unsqueeze(-2)).detach().clone()
+                    # print('y_acquire', y_acquire)
+
+                    X = torch.cat([X, X_acquire], dim=1)
+                    y = torch.cat([y, y_acquire], dim=1)
+
+                max_eig, d_star_index = torch.max(y, dim=1)
+                logging.info('max EIG {}'.format(max_eig))
+                results['max EIG'] = max_eig
+                d_star = X[torch.arange(num_parallel), d_star_index, ...].unsqueeze(-2).unsqueeze(-2)
+
             if typ == 'pce':
                 model_learn_xi = make_learn_xi_model(model.make_model())
                 grad_start_lr, grad_end_lr = 0.001, 0.001
@@ -203,10 +273,10 @@ def main(num_steps, num_parallel, experiment_name, typs, seed,
                 denorm_act = lb + (act + 1) * 0.5 * (ub - lb)
                 d_star = torch.tensor(denorm_act)
 
-            elapsed = time.time() - t
+            elapsed = time.time() - t0
             logging.info('elapsed design time {}'.format(elapsed))
             results['rng_state'] = torch.get_rng_state()
-            results['design_time'] = elapsed
+            results['time'] = elapsed
             results['d_star'] = d_star
             logging.info('design {} {}'.format(d_star.squeeze(), d_star.shape))
 
@@ -217,8 +287,8 @@ def main(num_steps, num_parallel, experiment_name, typs, seed,
             results['y'] = y_star
 
             # learn posterior with VI
-            t = time.time()
-            if typ == 'pce':
+            t1 = time.time()
+            if typ in ['pce', 'bo']:
                 model.reset(num_parallel)
                 prior = model.make_model()
                 loss = elbo_learn(
@@ -242,7 +312,8 @@ def main(num_steps, num_parallel, experiment_name, typs, seed,
                 results['rho_con'], results['alpha_con'] = rho_con, alpha_con
                 results['u_mu'], results['u_sig'] = u_mu, u_sig
 
-            logging.info(f'posterior learning time {time.time() - t}')
+            results['time'] = time.time() - t0
+            logging.info(f'posterior learning time {time.time() - t1}')
             # estimate EIG with sPCE
             spce += env_lower.get_reward(y_star, d_star)
             snmc += env_upper.get_reward(y_star, d_star)
@@ -266,6 +337,8 @@ if __name__ == "__main__":
     parser.add_argument("--name", nargs="?", default="", type=str)
     parser.add_argument("--typs", nargs="?", default="rand", type=str)
     parser.add_argument("--seed", nargs="?", default=-1, type=int)
+    parser.add_argument("--lengthscale", nargs="?", default=10., type=float)
+
     parser.add_argument("--loglevel", default="info", type=str)
     parser.add_argument("--num-gradient-steps", default=2500, type=int)
     parser.add_argument("--num-samples", default=10, type=int)
@@ -273,6 +346,6 @@ if __name__ == "__main__":
     parser.add_argument("--num-acquisition", default=1, type=int)
     parser.add_argument("--policy-src", default="", type=str)
     args = parser.parse_args()
-    main(args.num_steps, args.num_parallel, args.name, args.typs, args.seed,
+    main(args.num_steps, args.num_parallel, args.name, args.typs, args.seed, args.lengthscale,
          args.num_gradient_steps, args.num_samples, args.num_contrast_samples,
          args.num_acquisition, args.loglevel, args.policy_src)

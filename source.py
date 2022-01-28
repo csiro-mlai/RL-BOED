@@ -1,5 +1,7 @@
 import argparse
 import datetime
+import sys
+
 import joblib
 import logging
 from torch.distributions import transform_to
@@ -17,7 +19,9 @@ from contextlib import ExitStack
 from functools import partial
 from pyro.contrib.oed.eig import elbo_learn, opt_eig_ape_loss
 from pyro.contrib.oed.differentiable_eig import differentiable_pce_eig
-from pyro.contrib.util import iter_plates_to_shape
+from pyro.contrib.util import iter_plates_to_shape, lexpand
+from pyro.envs.adaptive_design_env import AdaptiveDesignEnv, UPPER, LOWER
+from pyro.models.adaptive_experiment_model import SourceModel
 from pyro.util import is_bad
 
 # TODO read from torch float spec
@@ -28,37 +32,6 @@ if torch.cuda.is_available():
 def get_git_revision_hash():
     return subprocess.check_output(['git', 'rev-parse', 'HEAD'])
 
-
-def make_source_model(theta_mu, theta_sig, observation_sd, alpha=1,
-                      observation_label="y", b=1e-1, m=1e-4):
-    def source_model(design):
-        # pyro.set_rng_seed(10)
-        if is_bad(design):
-            raise ArithmeticError("bad design, contains nan or inf")
-        batch_shape = design.shape[:-2]
-        with ExitStack() as stack:
-            for plate in iter_plates_to_shape(batch_shape):
-                stack.enter_context(plate)
-            theta_shape = batch_shape + theta_mu.shape[-2:]
-            theta = pyro.sample(
-                "theta",
-                dist.Normal(
-                    theta_mu.expand(theta_shape),
-                    theta_sig.expand(theta_shape)
-                ).to_event(2)
-            )
-            distance = torch.square(
-                design.unsqueeze(-2) - theta.unsqueeze(-3)
-            ).sum(dim=-1)
-            ratio = alpha / (m + distance)
-            mu = b + ratio.sum(dim=-1)
-            emission_dist = dist.Normal(
-                torch.log(mu), observation_sd
-            ).to_event(1)
-            y = pyro.sample(observation_label, emission_dist)
-            return y
-
-    return source_model
 
 
 def make_learn_xi_model(model):
@@ -95,7 +68,7 @@ def neg_loss(loss):
 
 def main(num_steps, num_parallel, experiment_name, typs, seed, lengthscale,
          num_gradient_steps, num_samples, num_contrast_samples, num_acquisition,
-         obs_sd, loglevel, policy_src, estimate_eig):
+         loglevel):
     numeric_level = getattr(logging, loglevel.upper(), None)
     if not isinstance(numeric_level, int):
         raise ValueError("Invalid log level: {}".format(loglevel))
@@ -113,7 +86,6 @@ def main(num_steps, num_parallel, experiment_name, typs, seed, lengthscale,
     except OSError:
         logging.info("File {} does not exist yet".format(results_file))
     typs = typs.split(",")
-    observation_sd = torch.tensor(obs_sd)
 
     for typ in typs:
         logging.info("Type {}".format(typ))
@@ -127,39 +99,33 @@ def main(num_steps, num_parallel, experiment_name, typs, seed, lengthscale,
         k = 2
         design_dim = 2
 
-        theta_mu = torch.zeros(num_parallel, 1, k, design_dim)
-        theta_sig = torch.ones(num_parallel, 1, k, design_dim)
-        theta_0 = torch.distributions.Normal(theta_mu, theta_sig).sample()
-        logging.info(f"theta_0 {theta_0}")
-
-        true_model = pyro.condition(
-            make_source_model(theta_mu, theta_sig, observation_sd),
-            {"theta": theta_0})
-        if estimate_eig:
-            print("estimate_eig")
-            data = joblib.load(policy_src)
-            eval_env = data['env'].env
-            eval_env.l = int(1e7)
-            eval_env.reset(n_parallel=num_parallel)
-            spce = 0
-
-        d_star_designs = torch.tensor([])
-        ys = torch.tensor([])
+        env_lower = AdaptiveDesignEnv(None, torch.zeros(2),
+                                      SourceModel(n_parallel=num_parallel), num_steps,
+                                      int(1e6), bound_type=LOWER)
+        env_upper = AdaptiveDesignEnv(None, torch.zeros(2),
+                                      SourceModel(n_parallel=num_parallel), num_steps,
+                                      int(1e6), bound_type=UPPER)
+        env_lower.reset(num_parallel)
+        env_upper.reset(num_parallel)
+        spce, snmc = 0, 0
+        model = SourceModel(n_parallel=num_parallel)
+        true_theta = env_lower.theta0
+        env_upper.theta0, env_upper.thetas = env_lower.theta0, env_lower.thetas
+        d_stars = torch.tensor([])
+        y_stars = torch.tensor([])
 
         for step in range(num_steps):
             logging.info("Step {}".format(step))
-            model = make_source_model(theta_mu, theta_sig, observation_sd)
             results = {'typ': typ, 'step': step, 'lengthscale': lengthscale,
                        'git-hash': get_git_revision_hash(), 'seed': seed,
-                        'observation_sd': observation_sd, 'theta_0': theta_0,
                        'num_gradient_steps': num_gradient_steps, 'num_samples': num_samples,
                        'num_contrast_samples': num_contrast_samples, 'num_acquisition': num_acquisition}
 
             # Design phase
-            t = time.time()
+            t0 = time.time()
 
-            if typ == 'pce-grad':
-                model_learn_xi = make_learn_xi_model(model)
+            if typ == 'pce':
+                model_learn_xi = make_learn_xi_model(model.make_model())
                 grad_start_lr, grad_end_lr = 0.001, 0.001
 
                 # Suggested num_gradient_steps = 2500
@@ -187,46 +153,54 @@ def main(num_steps, num_parallel, experiment_name, typs, seed, lengthscale,
                 logging.info('min loss {}'.format(min_ape))
                 results['min loss'] = min_ape
                 X = pyro.param("xi").detach().clone()
-                d_star_design = X[torch.arange(num_parallel), d_star_index, ...].unsqueeze(-2)
+                d_star = X[torch.arange(num_parallel), d_star_index, ...].unsqueeze(-2)
 
-            elapsed = time.time() - t
-            logging.info('elapsed design time {}'.format(elapsed))
-            results['design_time'] = elapsed
-            results['d_star_design'] = d_star_design
-            logging.info('design {} {}'.format(d_star_design.squeeze(), d_star_design.shape))
-            # update using only the result of the first experiment
-            prior = make_source_model(
-                torch.zeros(num_parallel, 1, k, design_dim),
-                torch.ones(num_parallel, 1, k, design_dim),
-                observation_sd
-            )
-            d_star_designs = torch.cat([d_star_designs, d_star_design], dim=-2)
-            # pyro.set_rng_seed(10)
-            if estimate_eig:
-                y = eval_env.model.run_experiment(
-                    d_star_design, eval_env.theta0)
-                spce += eval_env.get_reward(y, d_star_design)
-                results['spce'] = spce
-                if step == 0:
-                    results['theta0'] = {
-                        k: v.cpu() for k, v in eval_env.theta0.items()}
-                logging.info(f"spce {spce} {spce.shape}")
+            elif typ == "rand":
+                d_star = -8 + 16 * torch.rand((num_parallel, num_acquisition, 1, design_dim))
+                d_star = lexpand(d_star[0], num_parallel)
+
             else:
-                y = true_model(d_star_design)
-            ys = torch.cat([ys, y], dim=-1)
-            logging.info('ys {} {}'.format(ys.squeeze(), ys.shape))
-            results['y'] = y
+                sys.exit(f'''optimisation type must be in ["rand", "pce" 
+                but was {typ}''')
 
-            # pyro.set_rng_seed(10)
-            loss = elbo_learn(
-                prior, d_star_designs, ["y"], ["theta"], elbo_n_samples, elbo_n_steps,
-                partial(elboguide, dim=num_parallel), {"y": ys}, optim.Adam({"lr": elbo_lr})
-            )
-            theta_mu = pyro.param("theta_mu").detach().data.clone()
-            theta_sig = pyro.param("theta_sig").detach().data.clone()
+            elapsed = time.time() - t0
+            logging.info('elapsed design time {}'.format(elapsed))
+            results['rng_state'] = torch.get_rng_state()
+            results['design_time'] = elapsed
+            results['d_star'] = d_star
+            logging.info('design {} {}'.format(d_star.squeeze(), d_star.shape))
 
-            logging.info(f"theta_mu {theta_mu}\ntheta_sig {theta_sig}")
-            results['theta_mu'], results['theta_sig'] = theta_mu, theta_sig
+            d_stars = torch.cat([d_stars, d_star], dim=-3)
+            y_star = model.run_experiment(d_star, true_theta)
+            y_stars = torch.cat([y_stars, y_star], dim=-1)
+            logging.info(f'y_stars {y_stars.squeeze()} {y_stars.shape}')
+            results['y'] = y_star
+
+            if typ == "pce":
+                # don't bother inferring posteriors for random designs
+                model.reset(num_parallel)
+                prior = model.make_model()
+
+                # pyro.set_rng_seed(10)
+                loss = elbo_learn(
+                    prior, d_stars, ["y"], ["theta"], elbo_n_samples, elbo_n_steps,
+                    partial(elboguide, dim=num_parallel), {"y": y_stars}, optim.Adam({"lr": elbo_lr})
+                )
+                theta_mu = pyro.param("theta_mu").detach().data.clone()
+                theta_sig = pyro.param("theta_sig").detach().data.clone()
+                model.theta_mu, model.theta_sig = theta_mu, theta_sig
+
+                logging.info(f"theta_mu {theta_mu}\ntheta_sig {theta_sig}")
+                results['theta_mu'], results['theta_sig'] = theta_mu, theta_sig
+
+            results['time'] = time.time() - t0
+            # estimate EIG with sPCE
+            spce += env_lower.get_reward(y_star, d_star)
+            snmc += env_upper.get_reward(y_star, d_star)
+            results['spce'] = spce
+            logging.info(f"spce {spce} {spce.shape}")
+            results['snmc'] = snmc
+            logging.info(f"snmc {snmc} {snmc.shape}")
             for key, val in results.items():
                 if hasattr(val, "cpu"):
                     results[key] = val.cpu()
@@ -245,11 +219,10 @@ if __name__ == "__main__":
     parser.add_argument("--seed", nargs="?", default=-1, type=int)
     parser.add_argument("--lengthscale", nargs="?", default=10., type=float)
     parser.add_argument("--loglevel", default="info", type=str)
-    parser.add_argument("--num-gradient-steps", default=1000, type=int)
-    parser.add_argument("--num-samples", default=10, type=int)
-    parser.add_argument("--num-contrast-samples", default=10, type=int)
-    parser.add_argument("--num-acquisition", default=8, type=int)
-    parser.add_argument("--observation-sd", default=0.5, type=float)
+    parser.add_argument("--num-gradient-steps", default=2500, type=int)
+    parser.add_argument("--num-samples", default=500, type=int)
+    parser.add_argument("--num-contrast-samples", default=500, type=int)
+    parser.add_argument("--num-acquisition", default=1, type=int)
     parser.add_argument("--policy-src", default="", type=str)
     parser.add_argument("--estimate-eig", dest="estimate_eig",
                         action='store_true')
@@ -257,4 +230,4 @@ if __name__ == "__main__":
     args = parser.parse_args()
     main(args.num_steps, args.num_parallel, args.name, args.typs, args.seed, args.lengthscale,
          args.num_gradient_steps, args.num_samples, args.num_contrast_samples, args.num_acquisition,
-         args.observation_sd, args.loglevel, args.policy_src, args.estimate_eig)
+         args.loglevel)
