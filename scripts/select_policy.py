@@ -7,7 +7,6 @@ import numpy as np
 import torch
 
 from time import time
-from pyro.contrib.util import lexpand
 from pyro.envs.adaptive_design_env import LOWER, UPPER, TERMINAL
 from garage.experiment import deterministic
 
@@ -24,26 +23,35 @@ def main(src, results, dest, n_contrastive_samples, n_parallel,
     torch.set_printoptions(threshold=int(1e10))
     data = joblib.load(src)
     print(f"loaded data from {src}")
+    if hasattr(data['algo'], '_sampler'):
+        del data['algo']._sampler
+    torch.cuda.empty_cache()
     algo, env = data['algo'], data['env']
     pi = algo.policy
-    qf1, qf2 = algo._qf1, algo._qf2
-    env.env.env.l = n_contrastive_samples
-    env.env.env.n_parallel = n_parallel
-    env.env.env.bound_type = bound_type
+    # qf1, qf2 = algo._qf2, algo._qf2
+    env.env.l = n_contrastive_samples
+    env.env.n_parallel = n_parallel
+    env.env.bound_type = bound_type
     rewards = []
-    rep = n_samples // env.env.env.n_parallel
-    print(f"{n_samples} / {env.env.env.n_parallel} = {rep} iterations to run")
+    rep = n_samples // env.env.n_parallel
+    print(f"{n_samples} / {env.env.n_parallel} = {rep} iterations to run")
     t0 = time()
     random = False
     if results is None:
+        times = []
         for j in range(rep):
-            obs = env.reset(n_parallel=n_parallel)
-            # print("\n", env.env.env.theta0['theta'][0, 0], "\n")
+            print(f"iteration {j}")
+            obs, _ = env.reset(n_parallel=n_parallel)
+            # print("\n", env.env.theta0['th'][0, 0], "\n")
+            # print("\n", env.env.theta0['a'][0, 0], "\n")
             rewards.append([])
             for i in range(seq_length):
-                # exp_obs = lexpand(obs, 100)
+                ts = time()
                 act, dist_info = pi.get_actions(obs)
-                # act = dist_info['mean']
+                te = time()
+                times.append(te - ts)
+                # exp_obs = lexpand(obs, n_parallel)
+                # act, dist_info = pi.get_actions(exp_obs)
                 # opt_index = torch.argmax(
                 #     torch.min(qf1(exp_obs, act), qf2(exp_obs, act)),
                 #     dim=0,
@@ -56,16 +64,16 @@ def main(src, results, dest, n_contrastive_samples, n_parallel,
                     act_dist = torch.distributions.Normal(
                         torch.zeros_like(low), torch.ones_like(high))
                     act = act_dist.sample((n_parallel,))/8.
-                act = act.reshape(env.env.env.n_parallel, 1, 1, -1)
-                # print(f"act {act[0] * 4}")
+                act = act.reshape(env.env.n_parallel, 1, 1, -1)
+                # print(dist_info['logits'].topk(10))
+                # print(f"act {act[0]}")
                 # print(f"mean {dist_info['mean'][0] * 4}")
                 # print(f"std {dist_info['log_std'][0].exp() * 4}")
-                obs, reward, _, _ = env.step(act)
-                # obs_lb, obs_ub = env.observation_space.bounds
+                es = env.step(act)
+                obs, reward = es.observation, es.reward
+                obs_lb, obs_ub = env.observation_space.bounds
                 # print(f"obs {obs[0][-1] * (obs_ub - obs_lb) + obs_lb}")
                 # print(f"reward {reward[0]}")
-                if bound_type == UPPER:
-                    reward *= -1
                 rewards[-1].append(reward)
             rewards[-1] = torch.stack(rewards[-1])
     else:
@@ -84,17 +92,20 @@ def main(src, results, dest, n_contrastive_samples, n_parallel,
             for j in range(rep):
                 env.reset(n_parallel=n_parallel)
                 for k, v in theta0.items():
-                    env.env.env.thetas[k][0] = \
+                    env.env.thetas[k][0] = \
                         v[j * n_parallel:(j + 1) * n_parallel]
                 rewards.append([])
                 for i in range(seq_length):
                     y = ys[i]
                     design = designs[i]
-                    reward = env.env.env.get_reward(
+                    reward = env.env.get_reward(
                         y[j*n_parallel:(j+1)*n_parallel],
                         design[j*n_parallel:(j+1)*n_parallel])
                     rewards[-1].append(reward)
                 rewards[-1] = torch.stack(rewards[-1])
+    times = np.array(times)
+    print(f"mean time = {times.mean()}")
+    print(f"se time = {times.std() / np.sqrt(len(times))}")
     rewards = torch.cat(rewards, dim=1)#.squeeze()
     print(rewards.shape)
     cumsum_rewards = torch.cumsum(rewards, dim=0)
@@ -122,7 +133,7 @@ if __name__ == "__main__":
     parser.add_argument("--n_parallel", default=1, type=int)
     parser.add_argument("--n_samples", default=100, type=int)
     parser.add_argument("--seq_length", default=20, type=int)
-    parser.add_argument("--edit_type", default="a", type=str)
+    parser.add_argument("--edit_type", default="w", type=str)
     parser.add_argument("--seed", default=1, type=int)
     parser.add_argument("--bound_type", default="lower", type=str.lower,
                         choices=["lower", "upper", "terminal"])

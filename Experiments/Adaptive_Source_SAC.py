@@ -9,6 +9,7 @@ import numpy as np
 
 from garage.experiment import deterministic
 from garage.torch import set_gpu_mode
+from os import environ
 from pyro import wrap_experiment, set_rng_seed
 from pyro.algos import SAC
 from pyro.envs import AdaptiveDesignEnv, GymEnv, normalize
@@ -32,20 +33,21 @@ seeds = [373693, 943929, 675273, 79387, 508137, 557390, 756177, 155183, 262598,
 def main(n_parallel=1, budget=1, n_rl_itr=1, n_cont_samples=10, seed=0,
          log_dir=None, snapshot_mode='gap', snapshot_gap=500, bound_type=LOWER,
          src_filepath=None, discount=1., alpha=None, k=2, d=2, log_info=None,
-         tau=5e-3, pi_lr=3e-4, qf_lr=3e-4, buffer_capacity=int(1e6)):
+         tau=5e-3, pi_lr=3e-4, qf_lr=3e-4, buffer_capacity=int(1e6), ens_size=2,
+         M=2):
     if log_info is None:
         log_info = []
+
     @wrap_experiment(log_dir=log_dir, snapshot_mode=snapshot_mode,
                      snapshot_gap=snapshot_gap)
     def sac_source(ctxt=None, n_parallel=1, budget=1, n_rl_itr=1,
                    n_cont_samples=10, seed=0, src_filepath=None, discount=1.,
                    alpha=None, k=2, d=2, tau=5e-3, pi_lr=3e-4, qf_lr=3e-4,
-                   buffer_capacity=int(1e6)):
+                   buffer_capacity=int(1e6), ens_size=2, M=2):
         if log_info:
             logger.log(str(log_info))
-
         if torch.cuda.is_available():
-            set_gpu_mode(True)
+            set_gpu_mode(True, int(environ['CUDA_VISIBLE_DEVICES']))
             torch.set_default_tensor_type('torch.cuda.FloatTensor')
             logger.log("GPU available")
         else:
@@ -53,11 +55,19 @@ def main(n_parallel=1, budget=1, n_rl_itr=1, n_cont_samples=10, seed=0,
             logger.log("no GPU detected")
         deterministic.set_seed(seed)
         set_rng_seed(seed)
+        # if there is a saved agent to load
         if src_filepath:
             logger.log(f"loading data from {src_filepath}")
             data = joblib.load(src_filepath)
             env = data['env']
             sac = data['algo']
+            if not hasattr(sac, '_sampler'):
+                sac._sampler = LocalSampler(agents=sac.policy, envs=env,
+                                            max_episode_length=budget,
+                                            worker_class=VectorWorker)
+            if not hasattr(sac, 'replay_buffer'):
+                sac.replay_buffer = PathBuffer(
+                    capacity_in_transitions=buffer_capacity)
             if alpha is not None:
                 sac._use_automatic_entropy_tuning = False
                 sac._fixed_alpha = alpha
@@ -65,8 +75,8 @@ def main(n_parallel=1, budget=1, n_rl_itr=1, n_cont_samples=10, seed=0,
             logger.log("creating new policy")
             layer_size = 128
             design_space = BatchBox(low=-4., high=4., shape=(1, 1, 1, d))
-            obs_space = BatchBox(low=torch.as_tensor([-8.] * d + [-3.]),
-                                 high=torch.as_tensor([8.] * d + [10.])
+            obs_space = BatchBox(low=torch.as_tensor([-4.] * d + [-3.]),
+                                 high=torch.as_tensor([4.] * d + [10.])
                                  )
             model = SourceModel(n_parallel=n_parallel, d=d, k=k)
 
@@ -113,8 +123,7 @@ def main(n_parallel=1, budget=1, n_rl_itr=1, n_cont_samples=10, seed=0,
             env = make_env(design_space, obs_space, model, budget,
                            n_cont_samples, bound_type)
             policy = make_policy()
-            qf1 = make_q_func()
-            qf2 = make_q_func()
+            qfs = [make_q_func() for _ in range(ens_size)]
             replay_buffer = PathBuffer(capacity_in_transitions=buffer_capacity)
             sampler = LocalSampler(agents=policy, envs=env,
                                    max_episode_length=budget,
@@ -122,8 +131,7 @@ def main(n_parallel=1, budget=1, n_rl_itr=1, n_cont_samples=10, seed=0,
 
             sac = SAC(env_spec=env.spec,
                       policy=policy,
-                      qf1=qf1,
-                      qf2=qf2,
+                      qfs=qfs,
                       replay_buffer=replay_buffer,
                       sampler=sampler,
                       max_episode_length_eval=budget,
@@ -133,9 +141,11 @@ def main(n_parallel=1, budget=1, n_rl_itr=1, n_cont_samples=10, seed=0,
                       policy_lr=pi_lr,
                       qf_lr=qf_lr,
                       discount=discount,
+                      discount_delta=0.,
                       fixed_alpha=alpha,
                       buffer_batch_size=4096,
-                      reward_scale=1.,)
+                      reward_scale=1.,
+                      M=M)
 
         sac.to()
         trainer = Trainer(snapshot_config=ctxt)
@@ -146,7 +156,7 @@ def main(n_parallel=1, budget=1, n_rl_itr=1, n_cont_samples=10, seed=0,
                n_cont_samples=n_cont_samples, seed=seed,
                src_filepath=src_filepath, discount=discount, alpha=alpha, k=k,
                d=d, tau=tau, pi_lr=pi_lr, qf_lr=qf_lr,
-               buffer_capacity=buffer_capacity)
+               buffer_capacity=buffer_capacity, ens_size=ens_size, M=M)
 
     logger.dump_all()
 
@@ -172,6 +182,8 @@ if __name__ == "__main__":
     parser.add_argument("--pi-lr", default="3e-4", type=float)
     parser.add_argument("--qf-lr", default="3e-4", type=float)
     parser.add_argument("--buffer-capacity", default="1e6", type=float)
+    parser.add_argument("--ens-size", default="2", type=int)
+    parser.add_argument("--M", default="2", type=int)
     args = parser.parse_args()
     bound_type_dict = {"lower": LOWER, "upper": UPPER, "terminal": TERMINAL}
     bound_type = bound_type_dict[args.bound_type]
@@ -185,4 +197,5 @@ if __name__ == "__main__":
          snapshot_gap=args.snapshot_gap, bound_type=bound_type,
          src_filepath=args.src_filepath, discount=args.discount, alpha=alpha,
          k=args.k, d=args.d, log_info=log_info, tau=args.tau, pi_lr=args.pi_lr,
-         qf_lr=args.qf_lr, buffer_capacity=buff_cap)
+         qf_lr=args.qf_lr, buffer_capacity=buff_cap, ens_size=args.ens_size,
+         M=args.M)

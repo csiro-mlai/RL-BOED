@@ -15,10 +15,11 @@ titlesize = 26
 
 
 data = np.load("results.npz")
-step = 10
+step = 50
 L = 1e5
-err_bar = "se"
-title_template = "30-step Source Location"
+err_bar = "std"
+title_template = "Prey Population"
+file_template = "source"
 redline_x = np.array([100*i for i in range(20)])
 
 typ = "emeans" if err_bar in ["std", "se"] else "emedians"
@@ -26,7 +27,7 @@ means = data[typ].astype(np.float64).reshape((-1,))
 smoothed_means = np.asarray([means[i:i+step].mean() for i in range(means.size - step)])
 fig = plt.figure(figsize=(width, height), dpi=fig_dpi)
 fig.clear()
-xlim, ylim = [-5,20000], [0,12]
+xlim, ylim = [-5,40000], [2,6]
 ax = fig.add_subplot(1,1,1, xlim=xlim, ylim=ylim)
 ax.plot(np.arange(0, smoothed_means.size), smoothed_means)
 # ax.vlines(redline_x, ymin=ylim[0], ymax=ylim[1], colors=["red"], linestyles='dashed')
@@ -52,13 +53,14 @@ ax.set_ylabel("sPCE")
 ax.set_title(f"{title_template} Evaluation ({err_bar})", fontsize=titlesize)
 plt.grid(True)
 fig.tight_layout()
-fig.savefig("source_evaluation.png")
+fig.savefig(f"{file_template}_evaluation.png")
 
 
 
 typ = "rmeans" if err_bar in ["std", "se"] else "rmedians"
 means = data[typ].astype(np.float64).reshape((-1,))
 smoothed_means = np.asarray([means[i:i+step].mean() for i in range(means.size - step)])
+print(smoothed_means.argmax(), smoothed_means.max())
 fig = plt.figure(figsize=(width, height), dpi=fig_dpi)
 fig.clear()
 # xlim, ylim = [-5,1000], [-25,10]
@@ -89,4 +91,8 @@ ax.set_title(f"{title_template} Training", fontsize=titlesize)
 plt.grid(True)
 fig.tight_layout()
 
+<<<<<<< HEAD
 fig.savefig("source_returns.png")
+=======
+fig.savefig(f"{file_template}_returns.png")
+>>>>>>> master

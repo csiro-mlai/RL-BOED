@@ -200,6 +200,7 @@ class TimeStepBatch:
         observations (torch.Tensor): Non-flattened array of observations.
             Typically has shape (batch_size, S^*) (the unflattened state space
             of the current environment).
+        masks (torch.Tensor): Non-flattened array of masks
         actions (torch.Tensor): Non-flattened array of actions. Must
             have shape (batch_size, S^*) (the unflattened action space of the
             current environment).
@@ -207,6 +208,7 @@ class TimeStepBatch:
         next_observation (torch.Tensor): Non-flattened array of next
             observations. Has shape (batch_size, S^*). next_observations[i] was
             observed by the agent after taking actions[i].
+        next_masks (torch.Tensor): Non-flattened array of next
         env_infos (dict): A dict arbitrary environment state
             information.
         agent_infos (dict): A dict of arbitrary agent state information. For
@@ -228,9 +230,11 @@ class TimeStepBatch:
     env_spec: 'garage.EnvSpec'  # NOQA: F821
     episode_infos: Dict[str, torch.Tensor or dict]
     observations: torch.Tensor
+    masks: torch.Tensor
     actions: torch.Tensor
     rewards: torch.Tensor
     next_observations: torch.Tensor
+    next_masks: torch.Tensor
     agent_infos: Dict[str, torch.Tensor or dict]
     env_infos: Dict[str, torch.Tensor or dict]
     step_types: torch.Tensor
@@ -270,10 +274,14 @@ class TimeStepBatch:
             episode_infos=episode_infos,
             observations=torch.cat(
                 [batch.observations for batch in batches]),
+            masks=torch.cat(
+                [batch.masks for batch in batches]),
             actions=torch.cat([batch.actions for batch in batches]),
             rewards=torch.cat([batch.rewards for batch in batches]),
             next_observations=torch.cat(
                 [batch.next_observations for batch in batches]),
+            next_masks=torch.cat(
+                [batch.next_masks for batch in batches]),
             env_infos=env_infos,
             agent_infos=agent_infos,
             step_types=torch.cat([batch.step_types for batch in batches]))
@@ -298,9 +306,11 @@ class TimeStepBatch:
                 },
                 env_spec=self.env_spec,
                 observations=torch.as_tensor([self.observations[i]]),
+                masks=torch.as_tensor([self.masks[i]]),
                 actions=torch.as_tensor([self.actions[i]]),
                 rewards=torch.as_tensor([self.rewards[i]]),
                 next_observations=torch.as_tensor([self.next_observations[i]]),
+                next_masks=torch.as_tensor([self.next_masks[i]]),
                 env_infos={
                     k: torch.as_tensor([v[i]])
                     for (k, v) in self.env_infos.items()
@@ -333,6 +343,7 @@ class TimeStepBatch:
                     Typically has shape (batch_size, S^*) (the unflattened
                     state space
                     of the current environment).
+                masks (torch.Tensor): Non-flattened array of masks.
                 actions (torch.Tensor): Non-flattened array of actions. Must
                     have shape (batch_size, S^*) (the unflattened action
                     space of the
@@ -343,6 +354,7 @@ class TimeStepBatch:
                     observations. Has shape (batch_size, S^*).
                     next_observations[i] was
                     observed by the agent after taking actions[i].
+                next_masks (torch.Tensor): Non-flattened array of next masks.
                 env_infos (dict): A dict arbitrary environment state
                     information.
                 agent_infos (dict): A dict of arbitrary agent state
@@ -361,12 +373,16 @@ class TimeStepBatch:
                 },
                 'observations':
                 torch.as_tensor([self.observations[i]]),
+                'masks':
+                torch.as_tensor([self.masks[i]]),
                 'actions':
                 torch.as_tensor([self.actions[i]]),
                 'rewards':
                 torch.as_tensor([self.rewards[i]]),
                 'next_observations':
                 torch.as_tensor([self.next_observations[i]]),
+                'next_masks':
+                torch.as_tensor([self.next_masks[i]]),
                 'env_infos':
                 {k: torch.as_tensor([v[i]])
                  for (k, v) in self.env_infos.items()},
@@ -440,9 +456,11 @@ class TimeStepBatch:
             TimeStepBatch(episode_infos=sample['episode_infos'],
                           env_spec=env_spec,
                           observations=sample['observations'],
+                          masks=sample['masks'],
                           actions=sample['actions'],
                           rewards=sample['rewards'],
                           next_observations=sample['next_observations'],
+                          next_masks=sample['next_masks'],
                           env_infos=sample['env_infos'],
                           agent_infos=sample['agent_infos'],
                           step_types=sample['step_types'])
@@ -731,7 +749,12 @@ class EpisodeBatch(TimeStepBatch):
                 {k: v[start:stop]
                  for (k, v) in self.agent_infos.items()},
                 'step_types':
-                self.step_types[start:stop]
+                self.step_types[start:stop],
+                'masks':
+                self.masks[start:stop],
+                'next_masks':
+                torch.cat([self.masks[1 + start:stop],
+                           self.last_masks[i].unsqueeze(0)])
             })
         return episodes
 

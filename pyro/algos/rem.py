@@ -13,17 +13,16 @@ from garage.np.algos import RLAlgorithm
 from garage.torch import as_torch, global_device
 
 
-class DQN(RLAlgorithm):
-    """DQN algorithm. See https://arxiv.org/pdf/1312.5602.pdf.
+class REM(RLAlgorithm):
+    """REM algorithm. See https://arxiv.org/pdf/1907.04543.pdf.
 
-    DQN, also known as the Deep Q Network algorithm, is an off-policy algorithm
-    that learns action-value estimates for each state, action pair. The
-    policy then simply acts by taking the action that yields the highest Q(s,a)
-    value for a given state s.
+    REM, also known as the Random Ensemble Mixture algorithm, is an off-policy
+    q-learning algorithm that learns multiple q-functions. The loss is the
+    expectation of a random convex combination of individual q-function losses.
 
     Args:
         env_spec (EnvSpec): Environment specification.
-        policy (garage.torch.policies.Policy): Policy. For DQN, this is a
+        policy (garage.torch.policies.Policy): Policy. For REM, this is a
             policy that performs the action that yields the highest Q value.
         qf (nn.Module): Q-value network.
         replay_buffer (ReplayBuffer): Replay buffer.
@@ -32,8 +31,6 @@ class DQN(RLAlgorithm):
         n_train_steps (int): Training steps.
         eval_env (Environment): Evaluation environment. If None, a copy of the
             main environment is used for evaluation.
-        double_q (bool): Whether to use Double DQN.
-            See https://arxiv.org/abs/1509.06461.
         max_episode_length_eval (int or None): Maximum length of episodes used
             for off-policy evaluation. If `None`, defaults to
             `env_spec.max_episode_length`.
@@ -64,12 +61,11 @@ class DQN(RLAlgorithm):
             self,
             env_spec,
             policy,
-            qf,
+            qfs,
             replay_buffer,
             sampler,
             exploration_policy=None,
             eval_env=None,
-            double_q=True,
             qf_optimizer=torch.optim.Adam,
             *,  # Everything after this is numbers.
             steps_per_epoch=20,
@@ -97,15 +93,14 @@ class DQN(RLAlgorithm):
         self._epoch_qs = []
 
         self._policy = policy
-        self._qf = qf
+        self._qfs = qfs
+        self._K = len(self._qfs)
         self._n_train_steps = n_train_steps
 
         self._min_buffer_size = min_buffer_size
-        self._qf = qf
         self._steps_per_epoch = steps_per_epoch
         self._n_train_steps = n_train_steps
         self._buffer_batch_size = buffer_batch_size
-        self._double_q = double_q
         self._discount = discount
         self._reward_scale = reward_scale
         self.max_episode_length = env_spec.max_episode_length
@@ -120,10 +115,9 @@ class DQN(RLAlgorithm):
         self.policy = policy
         self.exploration_policy = exploration_policy
 
-        self._target_qf = copy.deepcopy(self._qf)
-        self._qf_optimizer = make_optimizer(qf_optimizer,
-                                            module=self._qf,
-                                            lr=qf_lr)
+        self._target_qfs = [copy.deepcopy(q) for q in self._qfs]
+        self._qf_optimizers = [
+            make_optimizer(qf_optimizer, module=q, lr=qf_lr) for q in self._qfs]
         self._eval_env = eval_env
 
         self._sampler = sampler
@@ -155,21 +149,6 @@ class DQN(RLAlgorithm):
                     self._min_buffer_size):
                 logger.log('Evaluating policy')
 
-                # params_before = self.exploration_policy.get_param_values()
-                # eval_eps = obtain_evaluation_episodes(
-                #     (self.exploration_policy
-                #      if not self._deterministic_eval else self.policy),
-                #     self._eval_env,
-                #     num_eps=self._num_eval_episodes,
-                #     max_episode_length=self._max_episode_length_eval)
-                # self.exploration_policy.set_param_values(params_before)
-                #
-                # last_returns = log_performance(trainer.step_itr,
-                #                                eval_eps,
-                #                                discount=self._discount)
-                # self._episode_reward_mean.extend(last_returns)
-                # tabular.record('Evaluation/100EpRewardMean',
-                #                np.mean(self._episode_reward_mean))
             self._epoch_ys = []
             self._epoch_qs = []
 
@@ -226,12 +205,13 @@ class DQN(RLAlgorithm):
 
         if self._tau is None:
             if itr % self._target_update_freq == 0:
-                self._target_qf = copy.deepcopy(self._qf)
+                self._target_qfs = [copy.deepcopy(q) for q in self._qfs]
         else:
-            for t_param, param in zip(self._target_qf.parameters(),
-                                      self._qf.parameters()):
-                t_param.data.copy_(t_param.data * (1.0 - self._tau) +
-                                   param.data * self._tau)
+            for target_qf, qf in zip(self._target_qfs, self._qfs):
+                for t_param, param in zip(target_qf.parameters(),
+                                          qf.parameters()):
+                    t_param.data.copy_(t_param.data * (1.0 - self._tau) +
+                                       param.data * self._tau)
 
     def _log_eval_results(self, epoch):
         """Log evaluation results after an epoch.
@@ -274,47 +254,44 @@ class DQN(RLAlgorithm):
         next_observations = as_torch(timesteps.next_observations)
         next_masks = as_torch(timesteps.next_masks)
         terminals = as_torch(timesteps.terminals).reshape(-1, 1)
-
         next_inputs = next_observations
         inputs = observations
-        with torch.no_grad():
-            if self._double_q:
-                # Use online qf to get optimal actions
-                selected_actions = torch.argmax(
-                    self._qf(next_inputs, next_masks), dim=1)
-                # use target qf to get Q values for those actions
-                selected_actions = selected_actions.long().unsqueeze(1)
-                best_qvals = torch.gather(
-                    self._target_qf(next_inputs, next_masks),
-                    dim=1, index=selected_actions)
-            else:
-                target_qvals = self._target_qf(next_inputs, next_masks)
-                best_qvals, _ = torch.max(target_qvals, 1)
-                best_qvals = best_qvals.unsqueeze(1)
-
         rewards_clipped = rewards
         if self._clip_reward is not None:
             rewards_clipped = torch.clamp(rewards, -1 * self._clip_reward,
                                           self._clip_reward)
-        y_target = (rewards_clipped +
-                    (1.0 - terminals) * self._discount * best_qvals)
-        y_target = y_target.squeeze(1)
+        with torch.no_grad():
+            weights = torch.rand(self._K) + 1e-9
+            weights /= weights.sum()
+            target_qvals = torch.sum(
+                weights * torch.stack([qf(next_inputs, next_masks)
+                                       for qf in self._target_qfs], dim=-1),
+                dim=-1)
+            best_qvals, _ = torch.max(target_qvals, 1)
+            best_qvals = best_qvals.unsqueeze(1)
+
+            y_target = (rewards_clipped +
+                        (1.0 - terminals) * self._discount * best_qvals)
+            y_target = y_target.squeeze(1)
 
         # optimize qf
-        selected_qs = torch.gather(
-            self._qf(inputs, masks), dim=1, index=actions.long()).squeeze()
+        selected_qs = torch.sum(
+            weights * torch.stack(
+                [torch.gather(q(inputs, masks), dim=1, index=actions.long()
+                              ).squeeze() for q in self._qfs],
+                dim=-1),
+            dim=-1)
         qval_loss = F.smooth_l1_loss(selected_qs, y_target)
 
-        self._qf_optimizer.zero_grad()
+        [o.zero_grad() for o in self._qf_optimizers]
         qval_loss.backward()
-
         # optionally clip the gradients
         if self._clip_grad is not None:
             torch.nn.utils.clip_grad_norm_(self.policy.parameters(),
                                            self._clip_grad)
-        self._qf_optimizer.step()
+        [o.step() for o in self._qf_optimizers]
 
-        return (qval_loss.detach(), y_target, selected_qs.detach())
+        return qval_loss.detach(), y_target, selected_qs.detach()
 
     def to(self, device=None):
         """Put all the networks within the model on device.
@@ -326,5 +303,5 @@ class DQN(RLAlgorithm):
         if device is None:
             device = global_device()
         logger.log('Using device: ' + str(device))
-        self._qf = self._qf.to(device)
-        self._target_qf = self._target_qf.to(device)
+        self._qfs = [q.to(device) for q in self._qfs]
+        self._target_qfs = [q.to(device) for q in self._target_qfs]
