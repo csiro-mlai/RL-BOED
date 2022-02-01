@@ -17,6 +17,7 @@ pip install -r requirements.txt
 # Running Experiments
 
 To run the experiments in the paper we must use different utilities for the different algorithms, since they come from different sources.
+The probabilistic models themselves are implemented in `boed/pyro/models/adaptive_experiment_model.py` and are transformed into MDPs by the `AdaptiveDesignEnv` class implemented in `boed/pyro/envs/adaptive_design_env.py`.
 
 ## RL Experiments
 

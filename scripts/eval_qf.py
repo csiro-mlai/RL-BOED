@@ -53,7 +53,10 @@ def main(src, n_contrastive_samples, n_parallel, seq_length, seed, bound_type,
         del data['algo']._sampler
     torch.cuda.empty_cache()
     algo, env = data['algo'], data['env']
-    pi = algo.policy
+    pi, discount = algo.policy, algo._discount
+    discounts = torch.full((seq_length, n_parallel), discount)
+    discounts[0, :] = 1.
+    discounts = torch.cumprod(discounts, 0)
     qf1, qf2 = algo._qf1, algo._qf2
     env.env.l = n_contrastive_samples
     env.env.n_parallel = n_parallel
@@ -76,7 +79,6 @@ def main(src, n_contrastive_samples, n_parallel, seq_length, seed, bound_type,
         errsmin.append([])
         est_qs.append([])
         pred_qs.append([])
-
 
         # for trajectory i at timestep j, generate n subtrajectories from j to T
         for i in range(n_parallel):
@@ -102,13 +104,16 @@ def main(src, n_contrastive_samples, n_parallel, seq_length, seed, bound_type,
             # compute Q*_pi(s_ij, a_ij) as average return-to-go
             if myopic:
                 true_q = sub_rews[0].mean()
+                if i == 0:
+                    print(torch.stack(sub_rews).mean())
             else:
-                true_q = sum(sub_rews).mean()
+                disc_rewards = torch.stack(sub_rews) * discounts[:seq_length-j]
+                true_q = torch.sum(disc_rewards, 0).mean()
             # compute err(s_ij, a_ij)
             padded_obs, mask = pad_obs(env.budget, cur_obs[i:i+1])
             reshaped_act = cur_act[i].reshape(1, -1)
-            q1_pred = qf1(padded_obs, reshaped_act).squeeze()
-            q2_pred = qf2(padded_obs, reshaped_act).squeeze()
+            q1_pred = qf1(padded_obs, reshaped_act, mask).squeeze()
+            q2_pred = qf2(padded_obs, reshaped_act, mask).squeeze()
             qmin_pred = torch.min(q1_pred, q2_pred)
             pred_qs[-1].append(qmin_pred.detach())
             est_qs[-1].append(true_q)
@@ -125,6 +130,7 @@ def main(src, n_contrastive_samples, n_parallel, seq_length, seed, bound_type,
         env._step_cnt = j
         es = env.step(cur_act)
         obs, rew = es.observation, es.reward
+        print(rew)
 
     pred_qs = torch.tensor(pred_qs).cpu().numpy()
     est_qs = torch.tensor(est_qs).cpu().numpy()
@@ -151,13 +157,11 @@ def main(src, n_contrastive_samples, n_parallel, seq_length, seed, bound_type,
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--src", type=str)
-    parser.add_argument("--results", default=None, type=str)
     parser.add_argument("--dest", type=str)
     parser.add_argument("--n_contrastive_samples", default=int(1e8), type=int)
     parser.add_argument("--n_parallel", default=1, type=int)
-    parser.add_argument("--n_samples", default=100, type=int)
     parser.add_argument("--seq_length", default=20, type=int)
-    parser.add_argument("--edit_type", default="a", type=str)
+    parser.add_argument("--edit_type", default="w", type=str)
     parser.add_argument("--seed", default=1, type=int)
     parser.add_argument("--myopic", action="store_true")
     parser.add_argument("--bound_type", default="lower", type=str.lower,
@@ -165,5 +169,6 @@ if __name__ == "__main__":
     args = parser.parse_args()
     bound_type = {
         "lower": LOWER, "upper": UPPER, "terminal": TERMINAL}[args.bound_type]
+    print(f"input params: {vars(args)}")
     main(args.src, args.n_contrastive_samples, args.n_parallel, args.seq_length,
          args.seed, bound_type, args.myopic, args.dest)
