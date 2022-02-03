@@ -61,6 +61,7 @@ class AdaptiveDesignEnv(Env):
             )
         )
         obs = self.get_obs()
+        # TODO: make sure we get correct rewards
         reward = self.get_reward(y, design)
         done = self.terminal()
         done = done * torch.ones_like(reward, dtype=torch.bool)

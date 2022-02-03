@@ -9,12 +9,12 @@ import numpy as np
 
 from garage.experiment import deterministic
 from garage.torch import set_gpu_mode
+from os import environ
 from pyro import wrap_experiment, set_rng_seed
 from pyro.algos import SAC
 from pyro.envs import AdaptiveDesignEnv, GymEnv, normalize
 from pyro.envs.adaptive_design_env import LOWER, UPPER, TERMINAL
 from pyro.experiment import Trainer
-from pyro.models.adaptive_experiment_model import SourceModel
 from pyro.models.ql_model import QLModel
 from pyro.policies.adaptive_tanh_gaussian_policy import \
     AdaptiveTanhGaussianPolicy
@@ -26,27 +26,28 @@ from pyro.spaces.batch_box import BatchBox
 from torch import nn
 from dowel import logger
 
-seeds = [373693, 943929, 675273, 79387, 508137, 557390, 756177, 155183, 262598,
-         572185]
+seeds = [727826, 166963, 246749, 725391, 249072, 481540, 367681, 386521, 369102,
+         440946]
 
 
 def main(n_parallel=1, budget=1, n_rl_itr=1, n_cont_samples=10, seed=0,
          log_dir=None, snapshot_mode='gap', snapshot_gap=500, bound_type=LOWER,
-         src_filepath=None, discount=1., alpha=None, k=2, d=2, log_info=None,
-         tau=5e-3, pi_lr=3e-4, qf_lr=3e-4, buffer_capacity=int(1e6)):
+         src_filepath=None, discount=1., alpha=None, log_info=None,
+         tau=5e-3, pi_lr=3e-4, qf_lr=3e-4, buffer_capacity=int(1e6), ens_size=2,
+         M=2):
     if log_info is None:
         log_info = []
+
     @wrap_experiment(log_dir=log_dir, snapshot_mode=snapshot_mode,
                      snapshot_gap=snapshot_gap)
     def sac_ql(ctxt=None, n_parallel=1, budget=1, n_rl_itr=1,
                    n_cont_samples=10, seed=0, src_filepath=None, discount=1.,
                    alpha=None, tau=5e-3, pi_lr=3e-4, qf_lr=3e-4,
-                   buffer_capacity=int(1e6)):
+                   buffer_capacity=int(1e6), ens_size=2, M=2):
         if log_info:
             logger.log(str(log_info))
-
         if torch.cuda.is_available():
-            set_gpu_mode(True)
+            set_gpu_mode(True, int(environ['CUDA_VISIBLE_DEVICES']))
             torch.set_default_tensor_type('torch.cuda.FloatTensor')
             logger.log("GPU available")
         else:
@@ -54,11 +55,19 @@ def main(n_parallel=1, budget=1, n_rl_itr=1, n_cont_samples=10, seed=0,
             logger.log("no GPU detected")
         deterministic.set_seed(seed)
         set_rng_seed(seed)
+        # if there is a saved agent to load
         if src_filepath:
             logger.log(f"loading data from {src_filepath}")
             data = joblib.load(src_filepath)
             env = data['env']
             sac = data['algo']
+            if not hasattr(sac, '_sampler'):
+                sac._sampler = LocalSampler(agents=sac.policy, envs=env,
+                                            max_episode_length=budget,
+                                            worker_class=VectorWorker)
+            if not hasattr(sac, 'replay_buffer'):
+                sac.replay_buffer = PathBuffer(
+                    capacity_in_transitions=buffer_capacity)
             if alpha is not None:
                 sac._use_automatic_entropy_tuning = False
                 sac._fixed_alpha = alpha
@@ -66,9 +75,13 @@ def main(n_parallel=1, budget=1, n_rl_itr=1, n_cont_samples=10, seed=0,
             logger.log("creating new policy")
             layer_size = 128
             T = 100
-            design_space = BatchBox(low=torch.as_tensor([[[[0.0, 1.0]]]]), high=torch.as_tensor([[[[0.0, 1.0]]]]))
-            obs_space = BatchBox(low=torch.as_tensor([0.0, 0.0] + [0.0] * (T * 2)),
-                                 high=torch.as_tensor([1.0, 1.0] + [1.0] * (T * 2)))
+            design_space = BatchBox(low=torch.as_tensor([[[[0.0, 0.0]]]]),
+                                    high=torch.as_tensor([[[[0.0, 1.0]]]]))
+            # observations are design and T action-reward pairs
+            obs_space = BatchBox(
+                low=torch.as_tensor([0.0, 0.0] + [0.0] * (T * 2)),
+                high=torch.as_tensor([1.0, 1.0] + [1.0] * (T * 2))
+            )
             model = QLModel(n_parallel=n_parallel, T=T)
 
             def make_env(design_space, obs_space, model, budget, n_cont_samples,
@@ -114,8 +127,7 @@ def main(n_parallel=1, budget=1, n_rl_itr=1, n_cont_samples=10, seed=0,
             env = make_env(design_space, obs_space, model, budget,
                            n_cont_samples, bound_type)
             policy = make_policy()
-            qf1 = make_q_func()
-            qf2 = make_q_func()
+            qfs = [make_q_func() for _ in range(ens_size)]
             replay_buffer = PathBuffer(capacity_in_transitions=buffer_capacity)
             sampler = LocalSampler(agents=policy, envs=env,
                                    max_episode_length=budget,
@@ -123,8 +135,7 @@ def main(n_parallel=1, budget=1, n_rl_itr=1, n_cont_samples=10, seed=0,
 
             sac = SAC(env_spec=env.spec,
                       policy=policy,
-                      qf1=qf1,
-                      qf2=qf2,
+                      qfs=qfs,
                       replay_buffer=replay_buffer,
                       sampler=sampler,
                       max_episode_length_eval=budget,
@@ -144,9 +155,9 @@ def main(n_parallel=1, budget=1, n_rl_itr=1, n_cont_samples=10, seed=0,
         trainer.train(n_epochs=n_rl_itr, batch_size=n_parallel * budget)
 
     sac_ql(n_parallel=n_parallel, budget=budget, n_rl_itr=n_rl_itr,
-               n_cont_samples=n_cont_samples, seed=seed,
-               src_filepath=src_filepath, discount=discount, alpha=alpha, tau=tau, pi_lr=pi_lr, qf_lr=qf_lr,
-               buffer_capacity=buffer_capacity)
+           n_cont_samples=n_cont_samples, seed=seed, src_filepath=src_filepath,
+           discount=discount, alpha=alpha, tau=tau, pi_lr=pi_lr, qf_lr=qf_lr,
+           buffer_capacity=buffer_capacity, ens_size=ens_size, M=M)
 
     logger.dump_all()
 
@@ -170,6 +181,8 @@ if __name__ == "__main__":
     parser.add_argument("--pi-lr", default="3e-4", type=float)
     parser.add_argument("--qf-lr", default="3e-4", type=float)
     parser.add_argument("--buffer-capacity", default="1e6", type=float)
+    parser.add_argument("--ens-size", default="2", type=int)
+    parser.add_argument("--M", default="2", type=int)
     args = parser.parse_args()
     bound_type_dict = {"lower": LOWER, "upper": UPPER, "terminal": TERMINAL}
     bound_type = bound_type_dict[args.bound_type]
@@ -183,4 +196,5 @@ if __name__ == "__main__":
          snapshot_gap=args.snapshot_gap, bound_type=bound_type,
          src_filepath=args.src_filepath, discount=args.discount, alpha=alpha,
          log_info=log_info, tau=args.tau, pi_lr=args.pi_lr,
-         qf_lr=args.qf_lr, buffer_capacity=buff_cap)
+         qf_lr=args.qf_lr, buffer_capacity=buff_cap, ens_size=args.ens_size,
+         M=args.M)
