@@ -18,8 +18,8 @@ from pyro.experiment import Trainer
 from pyro.models.adaptive_experiment_model import PreyModel
 from pyro.policies.adaptive_gumbel_softmax_policy import \
     AdaptiveGumbelSoftmaxPolicy
-from pyro.q_functions.adaptive_mlp_q_function import AdaptiveMLPQFunction
-from pyro.replay_buffer import PathBuffer
+from pyro.q_functions import AdaptiveDiscreteQFunction
+from pyro.replay_buffer import PathBuffer, NMCBuffer
 from pyro.sampler.local_sampler import LocalSampler
 from pyro.sampler.vector_worker import VectorWorker
 from pyro.spaces.batch_box import BatchBox
@@ -34,7 +34,7 @@ def main(n_parallel=1, budget=1, n_rl_itr=1, n_cont_samples=10, seed=0,
          log_dir=None, snapshot_mode='gap', snapshot_gap=500, bound_type=LOWER,
          src_filepath=None, discount=1., alpha=None, log_info=None,
          tau=5e-3, pi_lr=3e-4, qf_lr=3e-4, buffer_capacity=int(1e6), temp=1.,
-         target_entropy=None, ens_size=2, M=2):
+         target_entropy=None, ens_size=2, M=2, minibatch_size=4096):
     if log_info is None:
         log_info = []
     @wrap_experiment(log_dir=log_dir, snapshot_mode=snapshot_mode,
@@ -42,7 +42,8 @@ def main(n_parallel=1, budget=1, n_rl_itr=1, n_cont_samples=10, seed=0,
     def sac_prey(ctxt=None, n_parallel=1, budget=1, n_rl_itr=1,
                  n_cont_samples=10, seed=0, src_filepath=None, discount=1.,
                  alpha=None,tau=5e-3, pi_lr=3e-4, qf_lr=3e-4, ens_size=2,
-                 buffer_capacity=int(1e6), temp=1., target_entropy=None, M=2):
+                 buffer_capacity=int(1e6), temp=1., target_entropy=None, M=2,
+                 minibatch_size=4096):
         if log_info:
             logger.log(str(log_info))
         if torch.cuda.is_available():
@@ -74,7 +75,24 @@ def main(n_parallel=1, budget=1, n_rl_itr=1, n_cont_samples=10, seed=0,
             logger.log("creating new policy")
             layer_size = 128
             design_space = BatchDiscrete(floor=0, n=300, shape=(1,) * 4)
+
             obs_space = BatchBox(low=0., high=300., shape=(2,))
+            # is_cube = round(minibatch_size ** (1 / 3)) ** 3 == minibatch_size
+            is_cube = False
+            if is_cube:
+                n_in_samples = round(minibatch_size ** (1 / 3))
+                n_out_samples = n_in_samples ** 2
+                ratio = int(n_parallel / n_in_samples)
+                n_parallel = ratio * n_in_samples
+                logger.log(f"changing n_parallel to {n_parallel}")
+                capacity_factor = int(buffer_capacity / (n_in_samples * budget))
+                buffer_capacity = capacity_factor * n_in_samples * budget
+                logger.log(f"changing buffer_capacity to {buffer_capacity}")
+                replay_buffer = NMCBuffer(buffer_capacity, n_in_samples,
+                                          n_out_samples, budget)
+            else:
+                n_in_samples = n_out_samples = ratio = 1
+                replay_buffer = PathBuffer(capacity_in_transitions=buffer_capacity)
             model = PreyModel(n_parallel=n_parallel)
 
             def make_env(design_space, obs_space, model, budget, n_cont_samples,
@@ -106,7 +124,7 @@ def main(n_parallel=1, budget=1, n_rl_itr=1, n_cont_samples=10, seed=0,
                 )
 
             def make_q_func():
-                return AdaptiveMLPQFunction(
+                return AdaptiveDiscreteQFunction(
                     env_spec=env.spec,
                     encoder_sizes=[layer_size, layer_size],
                     encoder_nonlinearity=nn.ReLU,
@@ -121,7 +139,6 @@ def main(n_parallel=1, budget=1, n_rl_itr=1, n_cont_samples=10, seed=0,
                            n_cont_samples, bound_type)
             policy = make_policy()
             qfs = [make_q_func() for _ in range(ens_size)]
-            replay_buffer = PathBuffer(capacity_in_transitions=buffer_capacity)
             sampler = LocalSampler(agents=policy, envs=env,
                                    max_episode_length=budget,
                                    worker_class=VectorWorker)
@@ -141,7 +158,7 @@ def main(n_parallel=1, budget=1, n_rl_itr=1, n_cont_samples=10, seed=0,
                       discount_delta=0.,
                       fixed_alpha=alpha,
                       target_entropy=target_entropy,
-                      buffer_batch_size=1024,
+                      buffer_batch_size=minibatch_size,
                       reward_scale=1.,
                       M=M)
 
@@ -154,7 +171,8 @@ def main(n_parallel=1, budget=1, n_rl_itr=1, n_cont_samples=10, seed=0,
              n_cont_samples=n_cont_samples, seed=seed, alpha=alpha, tau=tau,
              src_filepath=src_filepath, discount=discount, pi_lr=pi_lr,
              qf_lr=qf_lr, buffer_capacity=buffer_capacity, temp=temp, M=M,
-             target_entropy=target_entropy, ens_size=ens_size)
+             target_entropy=target_entropy, ens_size=ens_size,
+             minibatch_size=minibatch_size)
 
     logger.dump_all()
 
@@ -182,6 +200,7 @@ if __name__ == "__main__":
     parser.add_argument("--target-entropy", default="-1", type=float)
     parser.add_argument("--ens-size", default="2", type=int)
     parser.add_argument("--M", default="2", type=int)
+    parser.add_argument("--minibatch-size", default="4096", type=int)
     args = parser.parse_args()
     bound_type_dict = {"lower": LOWER, "upper": UPPER, "terminal": TERMINAL}
     bound_type = bound_type_dict[args.bound_type]
@@ -197,4 +216,4 @@ if __name__ == "__main__":
          src_filepath=args.src_filepath, discount=args.discount, alpha=alpha,
          log_info=log_info, pi_lr=args.pi_lr, qf_lr=args.qf_lr, temp=args.temp,
          buffer_capacity=buff_cap, target_entropy=target_entropy, M=args.M,
-         ens_size=args.ens_size)
+         ens_size=args.ens_size, minibatch_size=args.minibatch_size)

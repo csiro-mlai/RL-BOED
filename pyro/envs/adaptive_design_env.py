@@ -9,7 +9,7 @@ TERMINAL = 2
 
 class AdaptiveDesignEnv(Env):
     def __init__(self, design_space, history_space, model, budget, l,
-                 true_model=None, bound_type=LOWER):
+                 true_model=None, bound_type=LOWER, M=1, N=1):
         """
         A generic class for building a SED MDP
 
@@ -19,6 +19,8 @@ class AdaptiveDesignEnv(Env):
             outcome_space (gym.Space): the space of experiment outcomes
             model (models.ExperimentModel): a model of experiment outcomes
             true_model (models.ExperimentModel): a ground-truth model
+            M (int): number of trajectories per sample of theta
+            N (int): number of samples of theta
         """
         self.action_space = design_space
         self.observation_space = history_space
@@ -26,6 +28,8 @@ class AdaptiveDesignEnv(Env):
         self.n_parallel = model.n_parallel
         self.budget = budget
         self.l = l
+        # self.M = M
+        # self.N = N
         self.bound_type = bound_type
         self.log_products = None
         self.last_logsumprod = None
@@ -46,6 +50,9 @@ class AdaptiveDesignEnv(Env):
         ))
         self.last_logsumprod = torch.logsumexp(self.log_products, dim=0)
         self.thetas = self.model.sample_theta(self.l + 1)
+        # if self.M != 1 and self.M * self.N == n_parallel:
+        #     for k, v in self.thetas.items():
+        #         self.thetas[k] = v[:, :self.N].repeat_interleave(self.M, dim=1)
         # index theta correctly because it is a dict
         self.theta0 = {k: v[0] for k, v in self.thetas.items()}
         return self.get_obs()
@@ -61,7 +68,6 @@ class AdaptiveDesignEnv(Env):
             )
         )
         obs = self.get_obs()
-        # TODO: make sure we get correct rewards
         reward = self.get_reward(y, design)
         done = self.terminal()
         done = done * torch.ones_like(reward, dtype=torch.bool)

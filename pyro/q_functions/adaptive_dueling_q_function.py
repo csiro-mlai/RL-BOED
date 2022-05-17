@@ -8,7 +8,7 @@ from garage.torch.modules import CNNModule, MLPModule
 
 # pytorch v1.6 issue, see https://github.com/pytorch/pytorch/issues/42305
 # pylint: disable=abstract-method
-class AdaptiveDiscreteQFunction(nn.Module):
+class AdaptiveDuelingQFunction(nn.Module):
     """Discrete Dueling CNN Q Function.
 
     A dueling Q network that estimates Q values of all possible discrete
@@ -80,7 +80,18 @@ class AdaptiveDiscreteQFunction(nn.Module):
             output_b_init=output_b_init,
             layer_normalization=layer_normalization)
 
-        self._emitter = MLPModule(
+        self._val = MLPModule(
+            input_dim=encoding_dim,
+            output_dim=self._action_dim,
+            hidden_sizes=emitter_sizes,
+            hidden_nonlinearity=emitter_nonlinearity,
+            hidden_w_init=hidden_w_init,
+            hidden_b_init=hidden_b_init,
+            output_nonlinearity=emitter_output_nonlinearity,
+            output_w_init=output_w_init,
+            output_b_init=output_b_init,
+            layer_normalization=layer_normalization)
+        self._act = MLPModule(
             input_dim=encoding_dim,
             output_dim=self._action_dim,
             hidden_sizes=emitter_sizes,
@@ -93,15 +104,13 @@ class AdaptiveDiscreteQFunction(nn.Module):
             layer_normalization=layer_normalization)
 
     # pylint: disable=arguments-differ
-    def forward(self, observations, actions=None, mask=None):
+    def forward(self, observations, mask=None):
         """Return Q-value(s).
 
         Args:
             observations (torch.Tensor): Batch of observations on default
                 torch device.
-            actions (torch.Tensor): optional tensor that indicates to return
-                the Q-values of specific actions.
-            mask (torch.Tensor): a mask to account for 0-padded inputs.
+            mask (torch.Tensor): a mask to account for 0-padded inputs
 
         Returns:
             torch.Tensor: Output value
@@ -109,8 +118,8 @@ class AdaptiveDiscreteQFunction(nn.Module):
         encoding = self._encoder(observations)
         if mask is not None:
             encoding = encoding * mask
-        pooled_encoding = encoding.sum(dim=-2)
-        q_vals = self._emitter(pooled_encoding)
-        if actions is not None:
-            return torch.gather(q_vals, -1, actions)
-        return q_vals
+        encoding = encoding.sum(dim=-2)
+        val = self._val(encoding)
+        act = self._act(encoding)
+        act = act - act.mean(1).unsqueeze(1)
+        return val + act

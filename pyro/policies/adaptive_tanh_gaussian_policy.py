@@ -5,7 +5,7 @@ import torch
 
 from garage.torch import global_device
 from garage.torch.distributions import TanhNormal
-from garage.torch.modules import GaussianMLPTwoHeadedModule, MLPModule
+from pyro.modules import GaussianMLPTwoHeadedModule, MLPModule
 from garage.torch.policies.stochastic_policy import StochasticPolicy
 from torch import nn
 
@@ -75,6 +75,7 @@ class AdaptiveTanhGaussianPolicy(StochasticPolicy):
                  hidden_b_init=nn.init.zeros_,
                  output_w_init=nn.init.xavier_uniform_,
                  output_b_init=nn.init.zeros_,
+                 init_mean=0.0,
                  init_std=1.0,
                  min_std=np.exp(-20.),
                  max_std=np.exp(2.),
@@ -107,6 +108,7 @@ class AdaptiveTanhGaussianPolicy(StochasticPolicy):
             output_nonlinearity=emitter_output_nonlinearity,
             output_w_init=output_w_init,
             output_b_init=output_b_init,
+            init_mean=init_mean,
             init_std=init_std,
             min_std=min_std,
             max_std=max_std,

@@ -237,8 +237,9 @@ class SAC(RLAlgorithm):
                 mean_ent = log_stds.mean().cpu().numpy() + \
                     0.5 + 0.5 * np.log(2 * np.pi)
                 if self._use_automatic_entropy_tuning:
-                    self._target_entropy -= 1 / 5e3
-                    # self._target_entropy -= 1 / 1.4e4
+                #    self._target_entropy -= 1 / 2e3
+                   self._target_entropy -= 1 / 1.4e4
+                #     self._target_entropy -= 1 / 1e5
             if "mean" in trainer.step_episode[0]["agent_infos"]:
                 mean_mean = torch.stack(
                     [p["agent_infos"]["mean"] for p in trainer.step_episode]
@@ -343,8 +344,12 @@ class SAC(RLAlgorithm):
         """
         alpha_loss = 0
         if self._use_automatic_entropy_tuning:
-            alpha_loss = (-(self._get_log_alpha(samples_data).exp()) *
-                          (log_pi.detach() + self._target_entropy)).mean()
+            log_pi = log_pi.detach()
+            alpha = self._get_log_alpha(samples_data).exp()
+            alpha_loss = -alpha * (log_pi + self._target_entropy)
+            if self.env_spec.action_space.is_discrete:
+                alpha_loss = (alpha_loss * log_pi.exp()).sum(axis=-1)
+            alpha_loss = alpha_loss.mean()
         return alpha_loss
 
     def _actor_objective(self, samples_data, new_actions, log_pi_new_actions):
@@ -378,11 +383,20 @@ class SAC(RLAlgorithm):
         mask = samples_data['mask']
         with torch.no_grad():
             alpha = self._get_log_alpha(samples_data).exp()
-        min_q_new_actions = torch.min(
-            torch.stack([q(obs, new_actions, mask) for q in self._qfs]),
-            dim=0).values
-        policy_objective = ((alpha * log_pi_new_actions) -
-                            min_q_new_actions.flatten()).mean()
+        if self.env_spec.action_space.is_discrete:
+            min_q_new_actions = torch.min(
+                torch.stack([q(obs, mask=mask) for q in self._qfs]),
+                dim=0).values
+            pi_new_actions = log_pi_new_actions.exp()
+            policy_objective = ((alpha * log_pi_new_actions) -
+                                min_q_new_actions) * pi_new_actions
+            policy_objective = policy_objective.sum(axis=1).mean()
+        else:
+            min_q_new_actions = torch.min(
+                torch.stack([q(obs, new_actions, mask) for q in self._qfs]),
+                dim=0).values
+            policy_objective = ((alpha * log_pi_new_actions) -
+                                min_q_new_actions.flatten()).mean()
         return policy_objective
 
     def _critic_objective(self, samples_data):
@@ -424,24 +438,33 @@ class SAC(RLAlgorithm):
             new_log_pi = next_action_dist.log_prob(
                 value=next_actions, pre_tanh_value=next_actions_pre_tanh)
         else:
-            next_actions = next_action_dist.rsample()
-            new_log_pi = next_action_dist.log_prob(next_actions)
+            new_log_pi = next_action_dist.logits
 
         # use random ensemble of q functions
         with torch.no_grad():
             m_idx = np.random.choice(len(self._qfs), self._M, replace=False)
             in_target_qfs = [self._target_qfs[i] for i in m_idx]
-            target_q_values = torch.min(
-                torch.stack([
-                    q(next_obs, next_actions, next_mask) for q in in_target_qfs
-                ]),
-                dim=0
-            ).values.flatten() - (alpha * new_log_pi)
+            # get exact expectation for discrete action spaces
+            if self.env_spec.action_space.is_discrete:
+                target_q_values = torch.min(
+                    torch.stack([
+                        q(next_obs, mask=next_mask) for q in in_target_qfs
+                    ]),
+                    dim=0
+                ).values - alpha * new_log_pi
+                new_pi = next_action_dist.probs
+                target_q_values = (target_q_values * new_pi).sum(axis=1)
+            else:
+                target_q_values = torch.min(
+                    torch.stack([
+                        q(next_obs, next_actions, next_mask) for q in in_target_qfs
+                    ]),
+                    dim=0
+                ).values.flatten() - (alpha * new_log_pi)
             q_target = rewards * self._reward_scale + (
-                1. - terminals) * self._discount * target_q_values
+                    1. - terminals) * self._discount * target_q_values
         q_preds = [q(obs, actions, mask) for q in self._qfs]
         qf_losses = [F.mse_loss(pred.flatten(), q_target) for pred in q_preds]
-
         return qf_losses
 
     def _update_targets(self):
@@ -491,8 +514,8 @@ class SAC(RLAlgorithm):
             log_pi_new_actions = action_dists.log_prob(
                 value=new_actions, pre_tanh_value=new_actions_pre_tanh)
         else:
-            new_actions = action_dists.rsample()
-            log_pi_new_actions = action_dists.log_prob(new_actions)
+            new_actions = None
+            log_pi_new_actions = action_dists.logits
         policy_loss = self._actor_objective(samples_data, new_actions,
                                             log_pi_new_actions)
         self._policy_optimizer.zero_grad()
@@ -502,6 +525,9 @@ class SAC(RLAlgorithm):
 
         # train temperature
         entropy = -log_pi_new_actions.mean()
+        if self.env_spec.action_space.is_discrete:
+            entropy = (log_pi_new_actions.exp() * -log_pi_new_actions
+                       ).sum(axis=-1).mean()
         if self._use_automatic_entropy_tuning:
             alpha_loss = self._temperature_objective(log_pi_new_actions,
                                                      samples_data)
