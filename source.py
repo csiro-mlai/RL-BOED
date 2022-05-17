@@ -22,7 +22,7 @@ from pyro.contrib.oed.differentiable_eig import differentiable_pce_eig
 from pyro.contrib.util import iter_plates_to_shape, lexpand
 from pyro.envs.adaptive_design_env import AdaptiveDesignEnv, UPPER, LOWER
 from pyro.models.adaptive_experiment_model import SourceModel
-from pyro.util import is_bad
+from torch.distributions import Normal
 
 # TODO read from torch float spec
 if torch.cuda.is_available():
@@ -68,7 +68,7 @@ def neg_loss(loss):
 
 def main(num_steps, num_parallel, experiment_name, typs, seed, lengthscale,
          num_gradient_steps, num_samples, num_contrast_samples, num_acquisition,
-         loglevel):
+         loglevel, policy_src, post_eig):
     numeric_level = getattr(logging, loglevel.upper(), None)
     if not isinstance(numeric_level, int):
         raise ValueError("Invalid log level: {}".format(loglevel))
@@ -109,6 +109,8 @@ def main(num_steps, num_parallel, experiment_name, typs, seed, lengthscale,
         env_upper.reset(num_parallel)
         spce, snmc = 0, 0
         model = SourceModel(n_parallel=num_parallel)
+        init_entropy = dist.Normal(model.theta_mu, model.theta_sig).entropy()
+        init_entropy = init_entropy.sum(dim=(-1, -2)).mean(dim=-1)
         true_theta = env_lower.theta0
         env_upper.theta0, env_upper.thetas = env_lower.theta0, env_lower.thetas
         d_stars = torch.tensor([])
@@ -155,9 +157,26 @@ def main(num_steps, num_parallel, experiment_name, typs, seed, lengthscale,
                 X = pyro.param("xi").detach().clone()
                 d_star = X[torch.arange(num_parallel), d_star_index, ...].unsqueeze(-2)
 
+            elif typ == "policy":
+                if step == 0:
+                    # load policy
+                    assert policy_src is not None, "no source found for policy"
+                    pi_data = joblib.load(policy_src)
+                    pi = pi_data['algo'].policy
+                    norm_env = pi_data['env']._env
+                    hist = torch.zeros((num_parallel, 0, design_dim + 1))
+                else:
+                    hist = torch.cat(
+                        [d_stars.squeeze(-2), y_stars.transpose(1, 2)], dim=-1)
+                norm_hist = norm_env._apply_normalize_obs(hist)
+                act = pi.get_actions(norm_hist)[0]
+                d_star = torch.reshape(
+                    norm_env._scale_action(act),
+                    (num_parallel, num_acquisition, 1, design_dim)
+                )
+
             elif typ == "rand":
                 d_star = -8 + 16 * torch.rand((num_parallel, num_acquisition, 1, design_dim))
-                d_star = lexpand(d_star[0], num_parallel)
 
             else:
                 sys.exit(f'''optimisation type must be in ["rand", "pce" 
@@ -176,8 +195,9 @@ def main(num_steps, num_parallel, experiment_name, typs, seed, lengthscale,
             logging.info(f'y_stars {y_stars.squeeze()} {y_stars.shape}')
             results['y'] = y_star
 
-            if typ == "pce":
-                # don't bother inferring posteriors for random designs
+            # don't bother inferring posteriors for random designs
+            if typ == 'pce' or post_eig:
+                t1 = time.time()
                 model.reset(num_parallel)
                 prior = model.make_model()
 
@@ -186,12 +206,18 @@ def main(num_steps, num_parallel, experiment_name, typs, seed, lengthscale,
                     prior, d_stars, ["y"], ["theta"], elbo_n_samples, elbo_n_steps,
                     partial(elboguide, dim=num_parallel), {"y": y_stars}, optim.Adam({"lr": elbo_lr})
                 )
+                logging.info(f'posterior learning time {time.time() - t1}')
                 theta_mu = pyro.param("theta_mu").detach().data.clone()
                 theta_sig = pyro.param("theta_sig").detach().data.clone()
                 model.theta_mu, model.theta_sig = theta_mu, theta_sig
 
                 logging.info(f"theta_mu {theta_mu}\ntheta_sig {theta_sig}")
                 results['theta_mu'], results['theta_sig'] = theta_mu, theta_sig
+                entropy = Normal(theta_mu, theta_sig).entropy()
+                entropy = entropy.sum(dim=(-1, -2)).mean(dim=-1)
+                eig = (init_entropy - entropy).squeeze()
+                logging.info(f'EIG {eig}')
+                results['eig'] = eig
 
             results['time'] = time.time() - t0
             # estimate EIG with sPCE
@@ -223,11 +249,11 @@ if __name__ == "__main__":
     parser.add_argument("--num-samples", default=500, type=int)
     parser.add_argument("--num-contrast-samples", default=500, type=int)
     parser.add_argument("--num-acquisition", default=1, type=int)
-    parser.add_argument("--policy-src", default="", type=str)
-    parser.add_argument("--estimate-eig", dest="estimate_eig",
+    parser.add_argument("--policy-src", default=None, type=str)
+    parser.add_argument("--post-eig", dest="post_eig",
                         action='store_true')
-    parser.set_defaults(estimate_eig=False)
+    parser.set_defaults(post_eig=False)
     args = parser.parse_args()
     main(args.num_steps, args.num_parallel, args.name, args.typs, args.seed, args.lengthscale,
          args.num_gradient_steps, args.num_samples, args.num_contrast_samples, args.num_acquisition,
-         args.loglevel)
+         args.loglevel, args.policy_src, args.post_eig)
