@@ -60,17 +60,17 @@ class NormalizedEnv(gym.Wrapper):
     def _update_obs_estimate(self, obs):
         flat_obs = gym.spaces.utils.flatten(self.env.observation_space, obs)
         self._obs_mean = (
-            1 - self._obs_alpha) * self._obs_mean + self._obs_alpha * flat_obs
+                                 1 - self._obs_alpha) * self._obs_mean + self._obs_alpha * flat_obs
         self._obs_var = (
-            1 - self._obs_alpha) * self._obs_var + self._obs_alpha * \
-            torch.square(flat_obs - self._obs_mean)
+                                1 - self._obs_alpha) * self._obs_var + self._obs_alpha * \
+                        torch.square(flat_obs - self._obs_mean)
 
     def _update_reward_estimate(self, reward):
         self._reward_mean = (1 - self._reward_alpha) * \
-            self._reward_mean + self._reward_alpha * reward
+                            self._reward_mean + self._reward_alpha * reward
         self._reward_var = (
-            1 - self._reward_alpha
-        ) * self._reward_var + self._reward_alpha * torch.square(
+                                   1 - self._reward_alpha
+                           ) * self._reward_var + self._reward_alpha * torch.square(
             reward - self._reward_mean)
 
     # def _apply_normalize_obs(self, obs):
@@ -101,8 +101,30 @@ class NormalizedEnv(gym.Wrapper):
             torch.Tensor: Normalized observation.
         """
         lb, ub = self.observation_space.low, self.observation_space.high
-        norm_obs = (obs - lb) / (ub-lb)
+        norm_obs = (obs - lb) / (ub - lb)
         return norm_obs
+
+    def _apply_denormalize_obs(self, obs):
+        """rescale observations from [0,1] to range [lb, ub]"""
+        lb, ub = self.observation_space.low, self.observation_space.high
+        denorm_obs = obs * (ub - lb) + lb
+        return denorm_obs
+
+    def _scale_action(self, action):
+        """rescale action from [-1,1] to [lb, ub]"""
+        lb, ub = self.action_space.low, self.action_space.high
+        if torch.isfinite(lb).all() and torch.isfinite(ub).all():
+            scaled_action = lb + (action + self._expected_action_scale) * (
+                    0.5 * (ub - lb) / self._expected_action_scale)
+            return clip(scaled_action, lb, ub)
+        else:
+            return action
+
+    def _unscale_action(self, action):
+        """rescale action from [lb, ub] tp [-1,1]"""
+        lb, ub = self.action_space.low, self.action_space.high
+        scaling_factor = 0.5 * (ub - lb) / self._expected_action_scale
+        return (action - lb) / scaling_factor - self._expected_action_scale
 
     def _apply_normalize_reward(self, reward):
         """Compute normalized reward.
@@ -155,13 +177,7 @@ class NormalizedEnv(gym.Wrapper):
         """
         if isinstance(self.action_space, gym.spaces.Box):
             # rescale the action when the bounds are not inf
-            lb, ub = self.action_space.low, self.action_space.high
-            if torch.isfinite(lb).all() and torch.isfinite(ub).all():
-                scaled_action = lb + (action + self._expected_action_scale) * (
-                    0.5 * (ub - lb) / self._expected_action_scale)
-                scaled_action = clip(scaled_action, lb, ub)
-            else:
-                scaled_action = action
+            scaled_action = self._scale_action(action)
         elif isinstance(self.action_space, pyro.spaces.BatchDiscrete):
             scaled_action = action + 1
         else:
