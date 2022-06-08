@@ -16,7 +16,7 @@ from pyro.envs import AdaptiveDesignEnv, GymEnv, normalize
 from pyro.envs.adaptive_design_env import LOWER, UPPER, TERMINAL
 from pyro.experiment import Trainer
 from pyro.models.adaptive_experiment_model import SourceModel
-from pyro.policies import AdaptiveTanhGaussianPolicy, AdaptiveToyPolicy
+from pyro.policies import AdaptiveTanhGaussianPolicy
 from pyro.q_functions.adaptive_mlp_q_function import AdaptiveMLPQFunction
 from pyro.replay_buffer import PathBuffer, NMCBuffer
 from pyro.sampler.local_sampler import LocalSampler
@@ -111,7 +111,7 @@ def main(n_parallel=1, budget=1, n_rl_itr=1, n_cont_samples=10, seed=0,
                 return env
 
             def make_policy():
-                return AdaptiveToyPolicy(
+                return AdaptiveTanhGaussianPolicy(
                     env_spec=env.spec,
                     encoder_sizes=[layer_size, layer_size],
                     encoder_nonlinearity=nn.ReLU,
@@ -120,7 +120,6 @@ def main(n_parallel=1, budget=1, n_rl_itr=1, n_cont_samples=10, seed=0,
                     emitter_nonlinearity=nn.ReLU,
                     emitter_output_nonlinearity=None,
                     encoding_dim=layer_size//2,
-                    init_mean=0.4,
                     init_std=np.sqrt(1 / 3),
                     min_std=np.exp(-20.),
                     max_std=np.exp(0.),
