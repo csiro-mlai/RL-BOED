@@ -1,6 +1,6 @@
 # RL for SED
 
-This repository holds the implementation code for the paper **Optimizing Sequential Experimental Design with Deep Reinforcement Learning**, submitted to ICML 2022.
+This repository holds the implementation code for the paper **Optimizing Sequential Experimental Design with Deep Reinforcement Learning**, published in ICML 2022.
 
 # Installation 
 
@@ -31,7 +31,7 @@ python -m Experiments.Adaptive_Source_SAC --n-contr-samples=100000 --n-rl-itr=20
 
 For CES
 ````
-ython -m Experiments.Adaptive_CES_SAC --n-contr-samples=100000 --n-rl-itr=20001 --log-dir=<log_dir>/boed_results/ces  --bound-type=lower --id=1 --budget=10 --discount=0.9 --buffer-capacity=1000000 
+python -m Experiments.Adaptive_CES_SAC --n-contr-samples=100000 --n-rl-itr=20001 --log-dir=<log_dir>/boed_results/ces  --bound-type=lower --id=1 --budget=10 --discount=0.9 --buffer-capacity=1000000 
 ````
 
 For Prey population
