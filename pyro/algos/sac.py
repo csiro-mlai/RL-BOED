@@ -82,6 +82,8 @@ class SAC(RLAlgorithm):
         use_deterministic_evaluation (bool): True if the trained policy
             should be evaluated deterministically.
         M (int): in-target minimization parameter
+        ent_anneal_rate (float): the rate at which to anneal the target entropy
+            in each iteration of the algorithm.
 
     """
 
@@ -111,7 +113,8 @@ class SAC(RLAlgorithm):
             num_evaluation_episodes=10,
             eval_env=None,
             use_deterministic_evaluation=True,
-            M=2):
+            M=2,
+            ent_anneal_rate=0.):
 
         self._qfs = qfs
         self.replay_buffer = replay_buffer
@@ -167,6 +170,7 @@ class SAC(RLAlgorithm):
         else:
             self._log_alpha = torch.Tensor([self._fixed_alpha]).log()
         self.episode_rewards = deque(maxlen=30)
+        self._ent_anneal_rate = ent_anneal_rate
 
     def train(self, trainer):
         """Obtain samplers and start actual training for each epoch.
@@ -236,10 +240,6 @@ class SAC(RLAlgorithm):
                 tabular.record("Policy/MeanStd", mean_std)
                 mean_ent = log_stds.mean().cpu().numpy() + \
                     0.5 + 0.5 * np.log(2 * np.pi)
-                if self._use_automatic_entropy_tuning:
-                #    self._target_entropy -= 1 / 2e3
-                   self._target_entropy -= 1 / 1.4e4
-                #     self._target_entropy -= 1 / 1e5
             if "mean" in trainer.step_episode[0]["agent_infos"]:
                 mean_mean = torch.stack(
                     [p["agent_infos"]["mean"] for p in trainer.step_episode]
@@ -256,9 +256,8 @@ class SAC(RLAlgorithm):
                 mean_ent = (-lps * lps.exp()).sum(dim=-1).mean().cpu().numpy()
                 if not self._use_automatic_entropy_tuning:
                     self._log_alpha -= 1e-4
-                else:
-                    itr = trainer.step_itr
-                    self._target_entropy = (np.log(300)/2) * np.exp(-itr/1e4)
+            if self._use_automatic_entropy_tuning:
+                self._target_entropy -= self._ent_anneal_rate
             tabular.record("Policy/MeanEntropy", mean_ent)
             tabular.record("Action/MeanAction", allact.mean(axis=0))
             tabular.record("Action/StdAction", allact.std(axis=0))

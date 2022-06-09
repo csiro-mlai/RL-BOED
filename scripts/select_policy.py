@@ -42,12 +42,13 @@ def main(src, results, dest, n_contrastive_samples, n_parallel,
         for j in range(rep):
             print(f"iteration {j}")
             obs, _ = env.reset(n_parallel=n_parallel)
-            # print("\n", env.env.theta0['th'][0, 0], "\n")
+            # print("\n", env.env.theta0['theta'][0, 0], "\n")
             # print("\n", env.env.theta0['a'][0, 0], "\n")
             rewards.append([])
             for i in range(seq_length):
+                mask = torch.ones_like(obs, dtype=torch.bool)[..., :1]
                 ts = time()
-                act, dist_info = pi.get_actions(obs)
+                act, dist_info = pi.get_actions(obs, mask=mask)
                 te = time()
                 times.append(te - ts)
                 # exp_obs = lexpand(obs, n_parallel)
@@ -66,12 +67,12 @@ def main(src, results, dest, n_contrastive_samples, n_parallel,
                     act = act_dist.sample((n_parallel,))/8.
                 act = act.reshape(env.env.n_parallel, 1, 1, -1)
                 # print(dist_info['logits'].topk(10))
-                # print(f"act {act[0]}")
+                # print(f"act {act[0] * 4}")
                 # print(f"mean {dist_info['mean'][0] * 4}")
                 # print(f"std {dist_info['log_std'][0].exp() * 4}")
                 es = env.step(act)
                 obs, reward = es.observation, es.reward
-                obs_lb, obs_ub = env.observation_space.bounds
+                # obs_lb, obs_ub = env.observation_space.bounds
                 # print(f"obs {obs[0][-1] * (obs_ub - obs_lb) + obs_lb}")
                 # print(f"reward {reward[0]}")
                 rewards[-1].append(reward)
@@ -111,7 +112,7 @@ def main(src, results, dest, n_contrastive_samples, n_parallel,
     cumsum_rewards = torch.cumsum(rewards, dim=0)
     sum_rewards = torch.sum(rewards, dim=0)
     print(cumsum_rewards.shape)
-    print(cumsum_rewards.transpose(1, 0))
+    # print(cumsum_rewards.transpose(1, 0))
     t1 = time()
     print(f"compute time {t1-t0} seconds")
     print(f"saving results to {dest}")

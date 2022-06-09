@@ -1,5 +1,5 @@
 """
-Use SAC to learn an agent that adaptively designs source location experiments
+Use SAC to learn an agent that adaptively designs prey population experiments
 """
 import argparse
 
@@ -142,7 +142,9 @@ def main(n_parallel=1, budget=1, n_rl_itr=1, n_cont_samples=10, seed=0,
             sampler = LocalSampler(agents=policy, envs=env,
                                    max_episode_length=budget,
                                    worker_class=VectorWorker)
-
+            # this will anneal entropy to 0 in the final iteration
+            # a discrete distribution can't have negative entropy
+            ent_anneal_rate = target_entropy / n_rl_itr / 4
             sac = SAC(env_spec=env.spec,
                       policy=policy,
                       qfs=qfs,
@@ -160,7 +162,8 @@ def main(n_parallel=1, budget=1, n_rl_itr=1, n_cont_samples=10, seed=0,
                       target_entropy=target_entropy,
                       buffer_batch_size=minibatch_size,
                       reward_scale=1.,
-                      M=M)
+                      M=M,
+                      ent_anneal_rate=ent_anneal_rate)
 
         sac.to()
         trainer = Trainer(snapshot_config=ctxt)

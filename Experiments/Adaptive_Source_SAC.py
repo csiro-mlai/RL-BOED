@@ -164,7 +164,8 @@ def main(n_parallel=1, budget=1, n_rl_itr=1, n_cont_samples=10, seed=0,
                       fixed_alpha=alpha,
                       buffer_batch_size=minibatch_size,
                       reward_scale=1.,
-                      M=M)
+                      M=M,
+                      ent_anneal_rate=1/1.4e4)
 
         sac.to()
         trainer = Trainer(snapshot_config=ctxt)
