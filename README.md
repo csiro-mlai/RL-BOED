@@ -1,6 +1,8 @@
 # RL for SED
 
-This repository holds the implementation code for the paper **Optimizing Sequential Experimental Design with Deep Reinforcement Learning**, published in ICML 2022.
+This repository holds the implementation code for the paper [**Optimizing Sequential Experimental Design with Deep Reinforcement Learning**](https://arxiv.org/abs/2202.00821), published in ICML 2022.
+
+The code herein is based on the reinforcement learning framework [Garage](https://github.com/rlworkgroup/garage) and the pyro implementation of [stochastic gradient BOED](http://proceedings.mlr.press/v108/foster20a/foster20a.pdf) by Adam Foster et al.
 
 # Installation 
 
