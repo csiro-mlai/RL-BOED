@@ -1,6 +1,6 @@
 # RL for SED
 
-This repository holds the implementation code for the paper **Optimizing Sequential Experimental Design with Deep Reinforcement Learning**, published in ICML 2022.
+This repository holds the implementation code for the paper [**Optimizing Sequential Experimental Design with Deep Reinforcement Learning**](https://arxiv.org/abs/2202.00821), published in ICML 2022.
 
 # Installation 
 
