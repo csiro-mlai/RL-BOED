@@ -2,6 +2,8 @@
 
 This repository holds the implementation code for the paper [**Optimizing Sequential Experimental Design with Deep Reinforcement Learning**](https://arxiv.org/abs/2202.00821), published in ICML 2022.
 
+The code herein is based on the reinforcement learning framework [Garage](https://github.com/rlworkgroup/garage) and the pyro implementation of [stochastic gradient BOED](http://proceedings.mlr.press/v108/foster20a/foster20a.pdf) by Adam Foster et al.
+
 # Installation 
 
 This code has been tested in Python 3.7.11. We offer no guarantee that it will be supported in other versions. Due to dependence on the `rpy2` package, you will need a local copy of `R` installed (see the [rpy2 installation instructions](https://rpy2.github.io/doc/latest/html/overview.html#install-installation)). If you do not want to install `rpy2` and are not interested inr unning the SMC experiment, simply remove this package from the `requirements.txt` file.
