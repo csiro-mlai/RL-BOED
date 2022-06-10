@@ -144,7 +144,9 @@ def main(n_parallel=1, budget=1, n_rl_itr=1, n_cont_samples=10, seed=0,
                                    worker_class=VectorWorker)
             # this will anneal entropy to 0 in the final iteration
             # a discrete distribution can't have negative entropy
-            ent_anneal_rate = target_entropy / n_rl_itr / 4
+            ent_anneal_rate = 0
+            if target_entropy:
+                ent_anneal_rate = target_entropy / n_rl_itr / 4
             sac = SAC(env_spec=env.spec,
                       policy=policy,
                       qfs=qfs,
